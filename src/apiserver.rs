@@ -87,11 +87,13 @@ async fn read_temp(State(state): State<Arc<MyState>>) -> (StatusCode, Json<TempV
             let mut w = OneWire::new(gpio::PinDriver::input_output_od(pin).unwrap()).unwrap();
             if let Ok(meas) = measure_temperature(&mut w) {
                 info!("Onewire response {name}:\n{meas:#?}");
-                vals.temperatures.push(TempData {
-                    iopin: name.clone(),
-                    sensor: meas.device_id,
-                    value: meas.temperature,
-                });
+                for m in meas.into_iter() {
+                    vals.temperatures.push(TempData {
+                        iopin: name.clone(),
+                        sensor: m.device_id,
+                        value: m.temperature,
+                    });
+                }
             }
             drop(w);
         }
