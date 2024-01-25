@@ -44,7 +44,21 @@ fn main() -> anyhow::Result<()> {
     let peripherals = Peripherals::take().unwrap();
     let pins = peripherals.pins;
 
-    // let foo = pins.gpio11.downgrade().pin();
+    let onew_pins = [
+        (pins.gpio0.downgrade(), "gpio0"),
+        (pins.gpio1.downgrade(), "gpio1"),
+        (pins.gpio2.downgrade(), "gpio2"),
+        (pins.gpio3.downgrade(), "gpio3"),
+        (pins.gpio4.downgrade(), "gpio4"),
+        (pins.gpio5.downgrade(), "gpio5"),
+        (pins.gpio6.downgrade(), "gpio6"),
+        (pins.gpio7.downgrade(), "gpio7"),
+        (pins.gpio8.downgrade(), "gpio8"),
+        (pins.gpio9.downgrade(), "gpio9"),
+        (pins.gpio10.downgrade(), "gpio10"),
+    ];
+
+    /*
     let onew_pins = [
         (pins.gpio4.downgrade(), "gpio4"),
         (pins.gpio16.downgrade(), "gpio16"),
@@ -60,6 +74,7 @@ fn main() -> anyhow::Result<()> {
         (pins.gpio32.downgrade(), "gpio32"),
         (pins.gpio33.downgrade(), "gpio33"),
     ];
+    */
 
     info!("Scanning 1-wire devices...");
     let mut active_pins = Vec::with_capacity(onew_pins.len());
