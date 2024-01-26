@@ -1,21 +1,19 @@
 // apiserver.rs
 
 use axum::{extract::State, http::StatusCode, response::Html, routing::get, Json, Router};
+pub use axum_macros::debug_handler;
 use core::f32;
-use esp_idf_hal::gpio;
 use log::*;
-use one_wire_bus::OneWire;
 use serde::Serialize;
 use std::{net::SocketAddr, sync::Arc};
 // use tower_http::trace::TraceLayer;
 
 use crate::*;
 
-pub async fn api_server(state: MyState) -> anyhow::Result<()> {
+pub async fn api_server(state: Arc<MyState>) -> anyhow::Result<()> {
     let listen = format!("0.0.0.0:{}", env!("API_PORT"));
     let addr = listen.parse::<SocketAddr>()?;
 
-    let shared_state = Arc::new(state);
     let app = Router::new()
         .route(
             "/",
@@ -25,7 +23,7 @@ pub async fn api_server(state: MyState) -> anyhow::Result<()> {
             }),
         )
         .route("/read", get(read_temp))
-        .with_state(shared_state);
+        .with_state(state);
 
     // .layer(TraceLayer::new_for_http());
 
@@ -34,72 +32,57 @@ pub async fn api_server(state: MyState) -> anyhow::Result<()> {
     Ok(axum::serve(listener, app.into_make_service()).await?)
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct TempData {
-    iopin: String,
-    sensor: String,
-    value: f32,
+    pub iopin: String,
+    pub sensor: String,
+    pub value: f32,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct TempValues {
-    temperatures: Vec<TempData>,
+    pub temperatures: Vec<TempData>,
+}
+
+impl TempValues {
+    pub fn new() -> Self {
+        TempValues {
+            temperatures: Vec::new(),
+        }
+    }
+    pub fn with_capacity(c: usize) -> Self {
+        TempValues {
+            temperatures: Vec::with_capacity(c),
+        }
+    }
+}
+
+impl Default for TempValues {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 async fn read_temp(State(state): State<Arc<MyState>>) -> (StatusCode, Json<TempValues>) {
     let status;
     {
-        let mut c = match state.cnt.write() {
-            Ok(c) => c,
-            Err(e) => {
-                error!("lock error: {e:#?}");
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(TempValues {
-                        temperatures: Vec::new(),
-                    }),
-                );
-            }
-        };
+        let mut c = state.cnt.write().await;
         *c += 1;
         status = format!("#{c}");
     }
     info!("Read: {status}");
 
-    let mut vals = TempValues {
-        temperatures: Vec::new(),
-    };
+    let mut ret;
     {
-        let mut pins = match state.onewire_pins.write() {
-            Ok(pins) => pins,
-            Err(e) => {
-                error!("lock error {e:#?}");
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(TempValues {
-                        temperatures: Vec::new(),
-                    }),
-                );
-            }
-        };
-
-        for (_i, (pin, name)) in pins.iter_mut().enumerate() {
-            let mut w = OneWire::new(gpio::PinDriver::input_output_od(pin).unwrap()).unwrap();
-            if let Ok(meas) = measure_temperature(&mut w) {
-                info!("Onewire response {name}:\n{meas:#?}");
-                for m in meas.into_iter() {
-                    vals.temperatures.push(TempData {
-                        iopin: name.clone(),
-                        sensor: m.device_id,
-                        value: m.temperature,
-                    });
-                }
-            }
-            drop(w);
-        }
+        let data = state.data.read().await;
+        ret = TempValues::with_capacity(data.temperatures.len());
+        data.temperatures
+            .iter()
+            // do not return invalid values
+            .filter(|v| v.value > -100.0)
+            .for_each(|v| ret.temperatures.push(v.clone()));
     }
-
-    (StatusCode::OK, Json(vals))
+    (StatusCode::OK, Json(ret))
 }
 
 // EOF

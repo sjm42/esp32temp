@@ -14,8 +14,8 @@ use esp_idf_sys as _;
 use esp_idf_sys::{esp, esp_app_desc, EspError};
 use log::*;
 use one_wire_bus::OneWire;
-
-use std::sync::RwLock;
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
 esp_app_desc!();
 
@@ -44,6 +44,7 @@ fn main() -> anyhow::Result<()> {
     let peripherals = Peripherals::take().unwrap();
     let pins = peripherals.pins;
 
+    #[cfg(feature = "esp32-c3")]
     let onew_pins = [
         (pins.gpio0.downgrade(), "gpio0"),
         (pins.gpio1.downgrade(), "gpio1"),
@@ -58,7 +59,7 @@ fn main() -> anyhow::Result<()> {
         (pins.gpio10.downgrade(), "gpio10"),
     ];
 
-    /*
+    #[cfg(feature = "esp32s")]
     let onew_pins = [
         (pins.gpio4.downgrade(), "gpio4"),
         (pins.gpio16.downgrade(), "gpio16"),
@@ -74,25 +75,39 @@ fn main() -> anyhow::Result<()> {
         (pins.gpio32.downgrade(), "gpio32"),
         (pins.gpio33.downgrade(), "gpio33"),
     ];
-    */
 
     info!("Scanning 1-wire devices...");
-    let mut active_pins = Vec::with_capacity(onew_pins.len());
+    let mut n_sensors = 0;
     let mut onewire_pins = Vec::with_capacity(onew_pins.len());
     for (i, (mut pin, name)) in onew_pins.into_iter().enumerate() {
         let mut w = OneWire::new(gpio::PinDriver::input_output_od(&mut pin).unwrap()).unwrap();
-        if let Ok(meas) = measure_temperature(&mut w) {
+        if let Ok(devs) = scan_1wire(&mut w) {
             drop(w);
-            info!("Onewire response[{i}]:\n{name} {meas:#?}");
-            active_pins.push(i);
-            onewire_pins.push((pin, name.to_string()));
+            n_sensors += devs.len();
+            info!("Onewire response[{i}]:\n{name} {devs:#?}");
+            onewire_pins.push(MyOnewire {
+                pin,
+                name: name.to_string(),
+                ids: devs,
+            });
         }
     }
 
+    // populate the temp_data structure
+    let mut temp_data = TempValues::with_capacity(n_sensors);
+    (0..n_sensors).for_each(|_| {
+        temp_data.temperatures.push(TempData {
+            iopin: "N/A".into(),
+            sensor: "N/A".into(),
+            value: -100.0,
+        });
+    });
     let state = MyState {
         cnt: RwLock::new(0),
-        onewire_pins: RwLock::new(onewire_pins),
+        sensors: RwLock::new(onewire_pins),
+        data: RwLock::new(temp_data),
     };
+    let shared_state = Arc::new(state);
 
     info!("Initializing Wi-Fi...");
     let wifi = AsyncWifi::wrap(
@@ -110,7 +125,8 @@ fn main() -> anyhow::Result<()> {
             wifi_loop.configure().await?;
             wifi_loop.initial_connect().await?;
 
-            tokio::spawn(api_server(state));
+            tokio::spawn(api_server(shared_state.clone()));
+            tokio::spawn(poll_sensors(shared_state));
 
             info!("Entering main Wi-Fi run loop...");
             wifi_loop.stay_connected().await
@@ -128,8 +144,8 @@ impl<'a> WifiLoop<'a> {
         info!("Setting Wi-Fi credentials...");
         self.wifi
             .set_configuration(&Configuration::Client(ClientConfiguration {
-                ssid: WIFI_SSID.into(),
-                password: WIFI_PASS.into(),
+                ssid: WIFI_SSID.try_into().unwrap(),
+                password: WIFI_PASS.try_into().unwrap(),
                 ..Default::default()
             }))?;
 
@@ -153,14 +169,13 @@ impl<'a> WifiLoop<'a> {
             // way too difficult to showcase the core logic of an example and have
             // a proper Wi-Fi event loop without a robust async runtime.  Fortunately, we can do it
             // now!
-            wifi.wifi_wait(|| wifi.is_up(), None).await?;
+            wifi.wifi_wait(|w| w.is_up(), None).await?;
 
             info!("Connecting to Wi-Fi...");
             wifi.connect().await?;
 
             info!("Waiting for association...");
-            wifi.ip_wait_while(|| wifi.is_up().map(|s| !s), None)
-                .await?;
+            wifi.ip_wait_while(|w| w.is_up().map(|s| !s), None).await?;
 
             if exit_after_first_connect {
                 return Ok(());
@@ -168,5 +183,4 @@ impl<'a> WifiLoop<'a> {
         }
     }
 }
-
 // EOF

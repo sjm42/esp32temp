@@ -1,8 +1,47 @@
 [package]
 name = "esp32temp"
-version = "0.0.1"
+version = "1.0.0"
 authors = ["Sami J. Mäkinen <sjm@iki.fi>"]
 edition = "2021"
+
+[features]
+default = ["esp32-c3"]
+esp32s = []
+esp32-c3 = []
+
+# [patch.crates-io]
+# tokio = { git = "https://github.com/tokio-rs/tokio", branch = "master" }
+# mio = { git = "https://github.com/tokio-rs/mio", branch = "master" }
+# socket2 = { git = "https://github.com/rust-lang/socket2", branch = "master" }
+
+[dependencies]
+panic-halt = "0"
+anyhow = "1"
+axum = { version = "0", features = ["http1", "json"] }
+axum-macros = "0"
+ds18b20 = "0"
+embedded-hal = "0"
+embedded-svc = { version = "0", features = ["experimental"] }
+esp-idf-sys = { version = "0", features = ["binstart"] }
+esp-idf-svc = { version = "0", features = ["alloc", "experimental"] }
+esp-idf-hal = "0"
+futures = "0"
+heapless = "0"
+log = "0"
+mio = { version = "0", features = ["log"] }
+one-wire-bus = "0"
+serde = "1"
+tokio = { version = "1", features = ["rt", "net", "io-util"] }
+tower-http = { version = "0" }
+# tower-http = { version = "0", features = ["trace"] }
+# tracing = "0"
+# tracing-subscriber = { version = "0", features = ["env-filter"] }
+
+
+[build-dependencies]
+build-data = "0"
+embuild = "0"
+anyhow = "1"
 
 [profile.release]
 strip = true
@@ -14,35 +53,3 @@ lto = true
 [profile.dev]
 debug = false
 opt-level = 3
-
-[patch.crates-io]
-tokio = { git = "https://github.com/tokio-rs/tokio", branch = "master" }
-mio = { git = "https://github.com/tokio-rs/mio", branch = "master" }
-socket2 = { git = "https://github.com/rust-lang/socket2", branch = "master" }
-
-[dependencies]
-panic-halt = "0"
-anyhow = "*"
-axum = { version = "0", features = ["http1", "json"] }
-ds18b20 = "0"
-embedded-svc = { version = "*", features = ["experimental"] }
-embedded-hal = "*"
-esp-idf-sys = { version = "*", features = ["binstart"] }
-esp-idf-svc = { version = "*", features = ["experimental"] }
-esp-idf-hal = "*"
-futures = "*"
-log = "*"
-mio = { version = "*", features = ["log"] }
-one-wire-bus = "0"
-serde = "1"
-tokio = { version = "1", features = ["rt", "net", "io-util"] }
-tower-http = { version = "0" }
-# tower-http = { version = "0", features = ["trace"] }
-# tracing = "0.1"
-# tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-
-
-[build-dependencies]
-build-data = "0"
-embuild = "*"
-anyhow = "*"

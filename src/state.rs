@@ -1,17 +1,23 @@
 // state.rs
 
-// use crate::*;
+use crate::*;
 
 use esp_idf_hal::gpio::AnyIOPin;
-use std::sync::RwLock;
-// use tokio::sync::RwLock;
+use one_wire_bus::Address;
+use tokio::sync::RwLock;
+
+pub struct MyOnewire {
+    pub pin: AnyIOPin,
+    pub name: String,
+    pub ids: Vec<Address>,
+}
+unsafe impl Send for MyOnewire {}
+unsafe impl Sync for MyOnewire {}
 
 pub struct MyState {
     pub cnt: RwLock<u64>,
-    pub onewire_pins: RwLock<Vec<(AnyIOPin, String)>>,
+    pub sensors: RwLock<Vec<MyOnewire>>,
+    pub data: RwLock<TempValues>,
 }
-
-unsafe impl Send for MyState {}
-unsafe impl Sync for MyState {}
 
 // EOF
