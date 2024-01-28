@@ -1,12 +1,15 @@
 // lib.rs
 
-mod apiserver;
-pub use apiserver::*;
+mod config;
+pub use config::*;
+
+mod state;
+pub use state::*;
 
 mod measure;
 pub use measure::*;
 
-mod state;
-pub use state::*;
+mod apiserver;
+pub use apiserver::*;
 
 // EOF

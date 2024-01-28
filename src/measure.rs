@@ -33,8 +33,8 @@ where
     for a in addrs.iter() {
         let sensor = ds18b20::Ds18b20::new::<E>(a.to_owned())?;
         sensor.set_config(
-            -100,
-            100,
+            i8::MIN,
+            i8::MAX,
             ds18b20::Resolution::Bits12,
             one_wire_bus,
             &mut Ets,
@@ -44,7 +44,7 @@ where
         ds18b20::Resolution::Bits12.delay_for_measurement_time(&mut FreeRtos);
         sleep(Duration::from_millis(10)).await; // extra sleep
 
-        // sometimes we have to retry
+        // Quite often we have to retry, CrcMismatch is observed occasionally
         let mut retries = 0;
         loop {
             match sensor.read_data(one_wire_bus, &mut Ets) {
@@ -127,7 +127,6 @@ pub async fn poll_sensors(state: Arc<MyState>) -> anyhow::Result<()> {
         {
             let mut onewires = state.sensors.write().await;
             let mut data = state.data.write().await;
-            // data.temperatures.clear();
             let mut i = 0;
             for onew in onewires.iter_mut() {
                 let mut w =

@@ -1,26 +1,29 @@
 // bin/esp32ircbot.rs
 
-use esp32temp::*;
-
+use embedded_storage::ReadStorage;
 use embedded_svc::wifi::{ClientConfiguration, Configuration};
-use esp_idf_hal::gpio::IOPin;
-use esp_idf_hal::prelude::Peripherals;
-use esp_idf_svc::hal::gpio;
-use esp_idf_svc::wifi::{AsyncWifi, EspWifi};
+use esp_idf_hal::{gpio::IOPin, prelude::Peripherals};
 use esp_idf_svc::{
-    eventloop::EspSystemEventLoop, nvs::EspDefaultNvsPartition, timer::EspTaskTimerService,
+    eventloop::EspSystemEventLoop,
+    hal::gpio,
+    nvs::EspDefaultNvsPartition,
+    timer::EspTaskTimerService,
+    wifi::{AsyncWifi, EspWifi},
 };
 use esp_idf_sys as _;
 use esp_idf_sys::{esp, esp_app_desc, EspError};
+use esp_storage::FlashStorage;
 use log::*;
 use one_wire_bus::OneWire;
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use tokio::{
+    sync::RwLock,
+    time::{sleep, Duration},
+};
+
+use esp32temp::*;
 
 esp_app_desc!();
-
-const WIFI_SSID: &str = env!("WIFI_SSID");
-const WIFI_PASS: &str = env!("WIFI_PASS");
 
 fn main() -> anyhow::Result<()> {
     esp_idf_sys::link_patches();
@@ -36,16 +39,49 @@ fn main() -> anyhow::Result<()> {
     };
     esp! { unsafe { esp_idf_sys::esp_vfs_eventfd_register(&config) } }?;
 
+    // comment or uncomment these, if you encounter this boot error:
+    // E (439) esp_image: invalid segment length 0xXXXX
+    // this means that the code size is not 32bit aligned
+    // and any small change to the code will likely fix it.
+    info!("Hello.");
+    info!("Starting up.");
+
     info!("Setting up board...");
     let sysloop = EspSystemEventLoop::take()?;
     let timer = EspTaskTimerService::new()?;
     let nvs = EspDefaultNvsPartition::take()?;
 
+    let mut flash = FlashStorage::new();
+    println!("Flash size = {} KiB", flash.capacity() >> 10);
+
+    #[cfg(feature = "reset_settings")]
+    let config = {
+        let c = MyConfig::default();
+        c.to_flash(&mut flash)?;
+        c
+    };
+
+    #[cfg(not(feature = "reset_settings"))]
+    let config = match MyConfig::from_flash(&mut flash) {
+        None => {
+            error!("Could not read flash config, using defaults");
+            let c = MyConfig::default();
+            c.to_flash(&mut flash)?;
+            info!("Successfully saved default config to flash.");
+            c
+        }
+
+        // we use settings saved on flash if we find them
+        Some(c) => c,
+    };
+
+    info!("My config:\n{config:#?}");
+
     let peripherals = Peripherals::take().unwrap();
     let pins = peripherals.pins;
 
-    #[cfg(feature = "esp32-c3")]
-    let onew_pins = [
+    #[cfg(feature = "esp32c3")]
+    let onew_pins = Box::new([
         (pins.gpio0.downgrade(), "gpio0"),
         (pins.gpio1.downgrade(), "gpio1"),
         (pins.gpio2.downgrade(), "gpio2"),
@@ -57,13 +93,11 @@ fn main() -> anyhow::Result<()> {
         (pins.gpio8.downgrade(), "gpio8"),
         (pins.gpio9.downgrade(), "gpio9"),
         (pins.gpio10.downgrade(), "gpio10"),
-    ];
+    ]);
 
     #[cfg(feature = "esp32s")]
-    let onew_pins = [
+    let onew_pins = Box::new([
         (pins.gpio4.downgrade(), "gpio4"),
-        (pins.gpio16.downgrade(), "gpio16"),
-        (pins.gpio17.downgrade(), "gpio17"),
         (pins.gpio18.downgrade(), "gpio18"),
         (pins.gpio19.downgrade(), "gpio19"),
         (pins.gpio21.downgrade(), "gpio21"),
@@ -74,7 +108,7 @@ fn main() -> anyhow::Result<()> {
         (pins.gpio27.downgrade(), "gpio27"),
         (pins.gpio32.downgrade(), "gpio32"),
         (pins.gpio33.downgrade(), "gpio33"),
-    ];
+    ]);
 
     info!("Scanning 1-wire devices...");
     let mut n_sensors = 0;
@@ -99,13 +133,16 @@ fn main() -> anyhow::Result<()> {
         temp_data.temperatures.push(TempData {
             iopin: "N/A".into(),
             sensor: "N/A".into(),
-            value: -100.0,
+            value: -1000.0,
         });
     });
     let state = MyState {
+        config: RwLock::new(config),
         cnt: RwLock::new(0),
         sensors: RwLock::new(onewire_pins),
         data: RwLock::new(temp_data),
+        flash: RwLock::new(flash),
+        reset: RwLock::new(false),
     };
     let shared_state = Arc::new(state);
 
@@ -122,9 +159,31 @@ fn main() -> anyhow::Result<()> {
         .build()?
         .block_on(async move {
             let mut wifi_loop = WifiLoop { wifi };
-            wifi_loop.configure().await?;
-            wifi_loop.initial_connect().await?;
+            wifi_loop.configure(shared_state.clone()).await?;
+            if let Err(e) = wifi_loop.initial_connect().await {
+                error!("WiFi connection failed: {e:?}");
+                {
+                    let mut flash = shared_state.flash.write().await;
+                    let mut config = shared_state.config.write().await;
+                    let max = config.boot_fail_max;
+                    let cnt = &mut config.boot_fail_cnt;
+                    if *cnt > max {
+                        error!("Maximum boot fails. Resetting settings to default.");
+                        let c = MyConfig::default();
+                        if c.to_flash(&mut flash).is_ok() {
+                            info!("Successfully saved default config to flash.");
+                        }
+                    } else {
+                        *cnt += 1;
+                        config.to_flash(&mut flash).ok();
+                    }
+                }
+                error!("Resetting...");
+                sleep(Duration::from_secs(5)).await;
+                esp_idf_hal::reset::restart();
+            }
 
+            tokio::spawn(housekeeping(shared_state.clone()));
             tokio::spawn(api_server(shared_state.clone()));
             tokio::spawn(poll_sensors(shared_state));
 
@@ -140,12 +199,26 @@ pub struct WifiLoop<'a> {
 }
 
 impl<'a> WifiLoop<'a> {
-    pub async fn configure(&mut self) -> Result<(), EspError> {
+    pub async fn configure(&mut self, state: Arc<MyState>) -> Result<(), EspError> {
         info!("Setting Wi-Fi credentials...");
         self.wifi
             .set_configuration(&Configuration::Client(ClientConfiguration {
-                ssid: WIFI_SSID.try_into().unwrap(),
-                password: WIFI_PASS.try_into().unwrap(),
+                ssid: state
+                    .config
+                    .read()
+                    .await
+                    .wifi_ssid
+                    .as_str()
+                    .try_into()
+                    .unwrap(),
+                password: state
+                    .config
+                    .read()
+                    .await
+                    .wifi_pass
+                    .as_str()
+                    .try_into()
+                    .unwrap(),
                 ..Default::default()
             }))?;
 
@@ -161,7 +234,7 @@ impl<'a> WifiLoop<'a> {
         self.do_connect_loop(false).await
     }
 
-    async fn do_connect_loop(&mut self, exit_after_first_connect: bool) -> Result<(), EspError> {
+    async fn do_connect_loop(&mut self, initial: bool) -> Result<(), EspError> {
         let wifi = &mut self.wifi;
         loop {
             // Wait for disconnect before trying to connect again.  This loop ensures
@@ -169,18 +242,50 @@ impl<'a> WifiLoop<'a> {
             // way too difficult to showcase the core logic of an example and have
             // a proper Wi-Fi event loop without a robust async runtime.  Fortunately, we can do it
             // now!
-            wifi.wifi_wait(|w| w.is_up(), None).await?;
+            wifi.wifi_wait(|w| w.is_up(), Some(Duration::from_secs(30)))
+                .await
+                .ok();
 
             info!("Connecting to Wi-Fi...");
-            wifi.connect().await?;
+            wifi.connect().await.ok();
 
             info!("Waiting for association...");
-            wifi.ip_wait_while(|w| w.is_up().map(|s| !s), None).await?;
-
-            if exit_after_first_connect {
+            match wifi
+                .ip_wait_while(|w| w.is_up().map(|s| !s), Some(Duration::from_secs(30)))
+                .await
+            {
+                Ok(_) => {}
+                Err(e) => {
+                    // only exit here if this is initial connection
+                    // otherwise, keep trying
+                    if initial {
+                        return Err(e);
+                    }
+                }
+            }
+            if initial {
                 return Ok(());
             }
         }
     }
 }
+
+pub async fn housekeeping(state: Arc<MyState>) -> ! {
+    loop {
+        let mut doit = false;
+        {
+            let mut reset = state.reset.write().await;
+            if *reset {
+                *reset = false;
+                doit = true;
+            }
+        }
+        if doit {
+            esp_idf_hal::reset::restart();
+        }
+
+        sleep(Duration::from_secs(10)).await;
+    }
+}
+
 // EOF
