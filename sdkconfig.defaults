@@ -8,8 +8,8 @@ CONFIG_LOG_MAXIMUM_EQUALS_DEFAULT=y
 # The tokio runtime and typical programs built with it need quite a bit of
 # stack space, but the good news is that you don't need many pthreads for
 # a complete application.
-CONFIG_ESP_MAIN_TASK_STACK_SIZE=32768
-CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE=8192
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=20480
+CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE=4096
 
 # Use this to set FreeRTOS kernel tick frequency to 1000 Hz (100 Hz by default).
 # This allows to use 1 ms granuality for thread sleeps (10 ms by default).

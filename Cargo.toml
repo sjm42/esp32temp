@@ -1,8 +1,9 @@
 [package]
 name = "esp32temp"
-version = "1.1.1"
+version = "1.3.0"
 authors = ["Sami J. Mäkinen <sjm@iki.fi>"]
 edition = "2021"
+
 
 [features]
 default = ["esp32c3"]
@@ -10,31 +11,27 @@ reset_settings = []
 esp32s = []
 esp32c3 = []
 
-# [patch.crates-io]
-# tokio = { git = "https://github.com/tokio-rs/tokio", branch = "master" }
-# mio = { git = "https://github.com/tokio-rs/mio", branch = "master" }
-# socket2 = { git = "https://github.com/rust-lang/socket2", branch = "master" }
 
 [dependencies]
 panic-halt = "0"
 anyhow = "1"
 axum = { version = "0", features = ["http1", "json"] }
 axum-macros = "0"
+crc = "3"
 ds18b20 = "0"
 critical-section = { version = "1.1", features = ["std"] }
 embedded-hal = "0"
 embedded-svc = { version = "0", features = ["experimental"] }
-embedded-storage = { version = "0" }
-# esp32c3-hal = "0"
 esp-idf-sys = { version = "0", features = ["binstart"] }
 esp-idf-svc = { version = "0", features = ["alloc", "experimental"] }
 esp-idf-hal = "0"
-esp-storage = { version = "0", features = ["esp32c3"] }
 futures = "0"
 heapless = "0"
 log = "0"
 mio = { version = "0", features = ["log"] }
 one-wire-bus = "0"
+postcard = { version = "1", features = ["alloc", "use-crc"] }
+rumqttc = { version = "0", default-features = false }
 serde = "1"
 serde_json = "1"
 tokio = { version = "1", features = ["rt", "net", "io-util"] }

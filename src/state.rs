@@ -3,7 +3,7 @@
 use crate::*;
 
 use esp_idf_hal::gpio::AnyIOPin;
-use esp_storage::FlashStorage;
+use esp_idf_svc::nvs;
 use one_wire_bus::Address;
 use tokio::sync::RwLock;
 
@@ -20,7 +20,7 @@ pub struct MyState {
     pub cnt: RwLock<u64>,
     pub sensors: RwLock<Vec<MyOnewire>>,
     pub data: RwLock<TempValues>,
-    pub flash: RwLock<FlashStorage>,
+    pub nvs: RwLock<nvs::EspNvs<nvs::NvsDefault>>,
     pub reset: RwLock<bool>,
 }
 

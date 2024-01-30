@@ -5,7 +5,7 @@ pub use axum_macros::debug_handler;
 use core::f32;
 use log::*;
 use serde::Serialize;
-use std::{net::SocketAddr, sync::Arc};
+use std::{net, net::SocketAddr, pin::Pin, sync::Arc};
 // use tower_http::trace::TraceLayer;
 
 use crate::*;
@@ -41,8 +41,8 @@ impl Default for TempValues {
     }
 }
 
-pub async fn api_server(state: Arc<MyState>) -> anyhow::Result<()> {
-    let listen = format!("0.0.0.0:{}", state.config.read().await.api_port);
+pub async fn api_server(state: Arc<Pin<Box<MyState>>>) -> anyhow::Result<()> {
+    let listen = format!("0.0.0.0:{}", state.config.read().await.port);
     let addr = listen.parse::<SocketAddr>()?;
 
     let app = Router::new()
@@ -55,6 +55,7 @@ pub async fn api_server(state: Arc<MyState>) -> anyhow::Result<()> {
         )
         .route("/read", get(get_temp))
         .route("/conf", get(get_conf).post(set_conf))
+        .route("/reset_conf", get(reset_conf))
         .with_state(state);
     // .layer(TraceLayer::new_for_http());
 
@@ -63,7 +64,9 @@ pub async fn api_server(state: Arc<MyState>) -> anyhow::Result<()> {
     Ok(axum::serve(listener, app.into_make_service()).await?)
 }
 
-async fn get_temp(State(state): State<Arc<MyState>>) -> (StatusCode, Json<TempValues>) {
+pub async fn get_temp(
+    State(state): State<Arc<Pin<Box<MyState>>>>,
+) -> (StatusCode, Json<TempValues>) {
     {
         let mut c = state.cnt.write().await;
         *c += 1;
@@ -83,19 +86,18 @@ async fn get_temp(State(state): State<Arc<MyState>>) -> (StatusCode, Json<TempVa
     (StatusCode::OK, Json(ret))
 }
 
-async fn get_conf(State(state): State<Arc<MyState>>) -> (StatusCode, Json<MyConfig>) {
+pub async fn get_conf(State(state): State<Arc<Pin<Box<MyState>>>>) -> (StatusCode, Json<MyConfig>) {
     {
         let mut c = state.cnt.write().await;
         *c += 1;
         info!("#{c} get_conf()");
     }
-
     (StatusCode::OK, Json(state.config.read().await.clone()))
 }
 
-async fn set_conf(
-    State(state): State<Arc<MyState>>,
-    Json(new_config): Json<MyConfig>,
+pub async fn set_conf(
+    State(state): State<Arc<Pin<Box<MyState>>>>,
+    Json(mut config): Json<MyConfig>,
 ) -> (StatusCode, String) {
     {
         let mut c = state.cnt.write().await;
@@ -103,19 +105,46 @@ async fn set_conf(
         info!("#{c} set_conf()");
     }
 
-    let mut flash = state.flash.write().await;
-    match new_config.to_flash(&mut flash) {
+    if config.v4mask > 30 {
+        let msg = "IPv4 mask error: bits must be between 0..30";
+        error!("{}", msg);
+        return (StatusCode::INTERNAL_SERVER_ERROR, msg.to_string());
+    }
+
+    if config.v4dhcp {
+        // clear out these if we are using DHCP
+        config.v4addr = net::Ipv4Addr::new(0, 0, 0, 0);
+        config.v4mask = 0;
+        config.v4gw = net::Ipv4Addr::new(0, 0, 0, 0);
+    }
+
+    info!("Saving new config to nvs...");
+    Box::pin(save_conf(state, config)).await
+}
+
+pub async fn reset_conf(State(state): State<Arc<Pin<Box<MyState>>>>) -> (StatusCode, String) {
+    {
+        let mut c = state.cnt.write().await;
+        *c += 1;
+        info!("#{c} reset_conf()");
+    }
+    info!("Saving  default config to nvs...");
+    Box::pin(save_conf(state, MyConfig::default())).await
+}
+
+async fn save_conf(state: Arc<Pin<Box<MyState>>>, config: MyConfig) -> (StatusCode, String) {
+    let mut nvs = state.nvs.write().await;
+    match config.to_nvs(&mut nvs) {
         Ok(_) => {
-            info!("Config saved to flash. Resetting...");
+            info!("Config saved to nvs. Resetting soon...");
             *state.reset.write().await = true;
             (StatusCode::OK, "OK".to_string())
         }
         Err(e) => {
-            let msg = format!("Flash save error: {e:?}");
+            let msg = format!("Nvs write error: {e:?}");
             error!("{}", msg);
             (StatusCode::INTERNAL_SERVER_ERROR, msg)
         }
     }
 }
-
 // EOF

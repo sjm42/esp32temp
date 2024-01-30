@@ -12,8 +12,6 @@ use tokio::time::{sleep, Duration};
 
 use crate::*;
 
-const READ_RETRY: usize = 2;
-
 #[derive(Debug)]
 pub struct Measurement {
     pub device_id: String,
@@ -23,6 +21,7 @@ pub struct Measurement {
 pub async fn measure_temperatures<P, E>(
     one_wire_bus: &mut OneWire<P>,
     addrs: &[Address],
+    max_retry: u32,
 ) -> Result<Vec<Measurement>, MeasurementError<E>>
 where
     P: OutputPin<Error = E> + InputPin<Error = E>,
@@ -60,7 +59,7 @@ where
                 Err(e) => {
                     retries += 1;
                     error!("Sensor {a:?} read error: {e:?}");
-                    if retries > READ_RETRY {
+                    if retries > max_retry {
                         break;
                     }
                 }
@@ -120,10 +119,22 @@ impl<E> From<OneWireError<E>> for MeasurementError<E> {
     }
 }
 
-pub async fn poll_sensors(state: Arc<MyState>) -> anyhow::Result<()> {
+pub async fn poll_sensors(state: Arc<Pin<Box<MyState>>>) -> anyhow::Result<()> {
     // sleep(Duration::from_secs(10)).await;
+    let poll_delay = state.config.read().await.delay;
+    let max_retry = state.config.read().await.retries;
     loop {
         info!("Polling 1-wire sensors");
+        let mut do_reset = false;
+
+        {
+            let mut reset = state.reset.write().await;
+            if *reset {
+                *reset = false;
+                do_reset = true;
+            }
+        }
+
         {
             let mut onewires = state.sensors.write().await;
             let mut data = state.data.write().await;
@@ -131,7 +142,7 @@ pub async fn poll_sensors(state: Arc<MyState>) -> anyhow::Result<()> {
             for onew in onewires.iter_mut() {
                 let mut w =
                     OneWire::new(gpio::PinDriver::input_output_od(&mut onew.pin).unwrap()).unwrap();
-                match measure_temperatures(&mut w, &onew.ids).await {
+                match Box::pin(measure_temperatures(&mut w, &onew.ids, max_retry)).await {
                     Ok(meas) => {
                         info!("Onewire response {name}:\n{meas:#?}", name = onew.name);
                         for m in meas.into_iter() {
@@ -153,7 +164,12 @@ pub async fn poll_sensors(state: Arc<MyState>) -> anyhow::Result<()> {
                 sleep(Duration::from_millis(100)).await; // extra sleep
             }
         }
-        sleep(Duration::from_secs(30)).await;
+
+        if do_reset {
+            esp_idf_hal::reset::restart();
+        }
+
+        sleep(Duration::from_secs(poll_delay)).await;
     }
 }
 
