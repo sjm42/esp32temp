@@ -33,8 +33,7 @@ pub struct MyConfig {
     pub v4gw: net::Ipv4Addr,
 
     pub mqtt_enable: bool,
-    pub mqtt_server: net::Ipv4Addr,
-    pub mqtt_port: u16,
+    pub mqtt_url: String,
     pub mqtt_topic: String,
     pub mqtt_delay: u64,
 }
@@ -60,8 +59,7 @@ impl Default for MyConfig {
             v4gw: net::Ipv4Addr::new(0, 0, 0, 0),
 
             mqtt_enable: false,
-            mqtt_server: net::Ipv4Addr::new(0, 0, 0, 0),
-            mqtt_port: 1883,
+            mqtt_url: "mqtt://mqtt.local:1883".into(),
             mqtt_topic: "esp32temp".into(),
             mqtt_delay: 60,
         }

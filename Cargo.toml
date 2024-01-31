@@ -1,6 +1,6 @@
 [package]
 name = "esp32temp"
-version = "1.3.0"
+version = "1.3.1"
 authors = ["Sami J. Mäkinen <sjm@iki.fi>"]
 edition = "2021"
 
@@ -31,7 +31,6 @@ log = "0"
 mio = { version = "0", features = ["log"] }
 one-wire-bus = "0"
 postcard = { version = "1", features = ["alloc", "use-crc"] }
-rumqttc = { version = "0", default-features = false }
 serde = "1"
 serde_json = "1"
 tokio = { version = "1", features = ["rt", "net", "io-util"] }
