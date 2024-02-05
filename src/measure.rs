@@ -1,6 +1,6 @@
 // measure.rs
 
-use embedded_hal::digital::v2::{InputPin, OutputPin};
+use embedded_hal::digital::{InputPin, OutputPin};
 use esp_idf_hal::{
     delay::{Ets, FreeRtos},
     gpio,

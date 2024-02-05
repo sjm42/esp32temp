@@ -78,7 +78,7 @@ async fn data_sender(
         {
             let data = state.data.read().await;
             for v in data.temperatures.iter().filter(|v| v.value > -1000.0) {
-                let topic = &format!("{mqtt_topic}/{}", v.sensor);
+                let topic = format!("{mqtt_topic}/{}", v.sensor);
                 info!("MQTT sending {topic}");
                 if let Err(e) = client
                     .publish(
