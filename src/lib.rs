@@ -18,4 +18,7 @@ pub use mqtt::*;
 mod apiserver;
 pub use apiserver::*;
 
+mod wifi;
+pub use wifi::*;
+
 // EOF

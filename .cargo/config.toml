@@ -72,4 +72,3 @@ build-std = ["std", "panic_abort"]
 
 [env]
 ESP_IDF_VERSION = "v5.1.2"
-# CROSS_COMPILE = { value = ".embuild/espressif/tools/riscv32-esp-elf/esp-12.2.0_20230208/riscv32-esp-elf/bin/riscv32-esp-elf", relative = true }

@@ -6,6 +6,8 @@ use core::f32;
 use log::*;
 use serde::Serialize;
 use std::{net, net::SocketAddr, pin::Pin, sync::Arc};
+use tokio::time::{sleep, Duration};
+
 // use tower_http::trace::TraceLayer;
 
 use crate::*;
@@ -41,7 +43,14 @@ impl Default for TempValues {
     }
 }
 
-pub async fn api_server(state: Arc<Pin<Box<MyState>>>) -> anyhow::Result<()> {
+pub async fn run_api_server(state: Arc<Pin<Box<MyState>>>) -> anyhow::Result<()> {
+    loop {
+        if *state.wifi_up.read().await {
+            break;
+        }
+        sleep(Duration::from_secs(1)).await;
+    }
+
     let listen = format!("0.0.0.0:{}", state.config.read().await.port);
     let addr = listen.parse::<SocketAddr>()?;
 
