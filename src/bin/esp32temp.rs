@@ -1,4 +1,5 @@
-// bin/esp32ircbot.rs
+// bin/esp32temp.rs
+
 #![warn(clippy::large_futures)]
 
 use esp_idf_hal::{gpio::IOPin, prelude::Peripherals};
