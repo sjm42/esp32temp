@@ -2,6 +2,7 @@
 
 #![warn(clippy::large_futures)]
 
+use esp_idf_hal::delay::FreeRtos;
 use esp_idf_hal::{gpio::IOPin, prelude::Peripherals};
 use esp_idf_svc::{
     eventloop::EspSystemEventLoop, hal::gpio, nvs, timer::EspTaskTimerService, wifi::WifiDriver,
@@ -168,8 +169,14 @@ fn main() -> anyhow::Result<()> {
                 _ = Box::pin(run_api_server(shared_state.clone())) => {}
                 _ = Box::pin(wifi_loop.run(wifidriver, sysloop, timer)) => {}
             };
-            Ok(())
-        }))
+        }));
+
+    // not actually returing from main() but we reboot instead
+    info!("main() finished, reboot.");
+    FreeRtos::delay_ms(3000);
+    esp_idf_hal::reset::restart();
+
+    Ok(())
 }
 
 // EOF
