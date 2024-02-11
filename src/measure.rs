@@ -120,7 +120,7 @@ impl<E> From<OneWireError<E>> for MeasurementError<E> {
 }
 
 pub async fn poll_sensors(state: Arc<Pin<Box<MyState>>>) -> anyhow::Result<()> {
-    // sleep(Duration::from_secs(10)).await;
+    sleep(Duration::from_secs(10)).await;
     let poll_delay = state.config.read().await.delay;
     let max_retry = state.config.read().await.retries;
     loop {
@@ -137,7 +137,6 @@ pub async fn poll_sensors(state: Arc<Pin<Box<MyState>>>) -> anyhow::Result<()> {
 
         {
             let mut onewires = state.sensors.write().await;
-            let mut data = state.data.write().await;
             let mut i = 0;
             for onew in onewires.iter_mut() {
                 let mut w =
@@ -145,6 +144,7 @@ pub async fn poll_sensors(state: Arc<Pin<Box<MyState>>>) -> anyhow::Result<()> {
                 match Box::pin(measure_temperatures(&mut w, &onew.ids, max_retry)).await {
                     Ok(meas) => {
                         info!("Onewire response {name}:\n{meas:#?}", name = onew.name);
+                        let mut data = state.data.write().await;
                         for m in meas.into_iter() {
                             data.temperatures[i] = TempData {
                                 iopin: onew.name.clone(),

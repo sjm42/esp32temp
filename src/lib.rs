@@ -21,4 +21,6 @@ pub use apiserver::*;
 mod wifi;
 pub use wifi::*;
 
+pub const NO_TEMP: f32 = -1000.0;
+
 // EOF

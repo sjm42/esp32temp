@@ -25,14 +25,15 @@ pub async fn run_mqtt(state: Arc<Pin<Box<MyState>>>) -> anyhow::Result<()> {
         sleep(Duration::from_secs(1)).await;
     }
 
+    let url = state.config.read().await.mqtt_url.clone();
+    let myid = state.myid.read().await.clone();
     loop {
+        sleep(Duration::from_secs(10)).await;
         {
-            let url = &state.config.read().await.mqtt_url;
-            let myid = state.myid.read().await.clone();
             info!("MQTT conn: {url} [{myid}]");
 
             let (client, conn) = match mqtt::client::EspAsyncMqttClient::new(
-                &state.config.read().await.mqtt_url,
+                &url,
                 &mqtt::client::MqttClientConfiguration {
                     client_id: Some(&myid),
                     keep_alive_interval: Some(Duration::from_secs(25)),
@@ -55,17 +56,6 @@ pub async fn run_mqtt(state: Arc<Pin<Box<MyState>>>) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn event_loop(
-    _state: Arc<Pin<Box<MyState>>>,
-    mut conn: mqtt::client::EspAsyncMqttConnection,
-) -> anyhow::Result<()> {
-    while let Ok(notification) = Box::pin(conn.next()).await {
-        info!("MQTT received: {:?}", notification.payload());
-    }
-    error!("MQTT connection closed.");
-    bail!("MQTT closed.")
-}
-
 async fn data_sender(
     state: Arc<Pin<Box<MyState>>>,
     mut client: mqtt::client::EspAsyncMqttClient,
@@ -77,7 +67,7 @@ async fn data_sender(
         sleep(Duration::from_secs(mqtt_delay)).await;
         {
             let data = state.data.read().await;
-            for v in data.temperatures.iter().filter(|v| v.value > -1000.0) {
+            for v in data.temperatures.iter().filter(|v| v.value > NO_TEMP) {
                 let topic = format!("{mqtt_topic}/{}", v.sensor);
                 info!("MQTT sending {topic}");
                 if let Err(e) = client
@@ -94,6 +84,17 @@ async fn data_sender(
             }
         }
     }
+}
+
+async fn event_loop(
+    _state: Arc<Pin<Box<MyState>>>,
+    mut conn: mqtt::client::EspAsyncMqttConnection,
+) -> anyhow::Result<()> {
+    while let Ok(notification) = Box::pin(conn.next()).await {
+        info!("MQTT received: {:?}", notification.payload());
+    }
+    error!("MQTT connection closed.");
+    bail!("MQTT closed.")
 }
 
 // EOF

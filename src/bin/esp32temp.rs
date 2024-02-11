@@ -130,7 +130,7 @@ fn main() -> anyhow::Result<()> {
         temp_data.temperatures.push(TempData {
             iopin: "N/A".into(),
             sensor: "N/A".into(),
-            value: -1000.0,
+            value: NO_TEMP,
         });
     });
 

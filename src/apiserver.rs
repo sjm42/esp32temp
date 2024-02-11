@@ -12,14 +12,14 @@ use tokio::time::{sleep, Duration};
 
 use crate::*;
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct TempData {
     pub iopin: String,
     pub sensor: String,
     pub value: f32,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct TempValues {
     pub temperatures: Vec<TempData>,
 }
@@ -85,11 +85,12 @@ pub async fn get_temp(
     let mut ret;
     {
         let data = state.data.read().await;
+        // info!("My current data:\n{data:#?}");
         ret = TempValues::with_capacity(data.temperatures.len());
         data.temperatures
             .iter()
             // do not return invalid values
-            .filter(|v| v.value > -1000.0)
+            .filter(|v| v.value > NO_TEMP)
             .for_each(|v| ret.temperatures.push(v.clone()));
     }
     (StatusCode::OK, Json(ret))
