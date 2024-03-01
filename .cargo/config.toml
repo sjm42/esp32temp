@@ -71,4 +71,4 @@ rustflags = [
 build-std = ["std", "panic_abort"]
 
 [env]
-ESP_IDF_VERSION = "v5.1.2"
+ESP_IDF_VERSION = "v5.2"
