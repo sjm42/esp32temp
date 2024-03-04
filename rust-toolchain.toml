@@ -1,7 +1,6 @@
 [toolchain]
 
 # For ESP32-C3 use:
-#channel = "nightly"
 #channel = "nightly-2024-02-01"
 #components = ["rust-src"]
 
