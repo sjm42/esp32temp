@@ -46,13 +46,11 @@ Flash it on the chip!
 
 ```lang=bash
 cargo run -r
-
 ```
 
 Occasionally, we run these _spells_ to keep our tools up to date.
 
 ```lang=bash
-
 rustup update
 espup update
 cargo install-update -a
