@@ -2,10 +2,10 @@
 
 # For ESP32-C3 use:
 #channel = "nightly"
-channel = "nightly-2024-02-01"
-components = ["rust-src"]
+#channel = "nightly-2024-02-01"
+#components = ["rust-src"]
 
 # For ESP32 use:
-#channel = "esp"
+channel = "esp"
 
 # EOF

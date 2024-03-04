@@ -756,7 +756,7 @@ dependencies = [
 
 [[package]]
 name = "esp32temp"
-version = "1.5.3"
+version = "1.5.4"
 dependencies = [
  "anyhow",
  "axum",

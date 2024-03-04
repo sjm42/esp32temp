@@ -1,12 +1,12 @@
 [package]
 name = "esp32temp"
-version = "1.5.3"
+version = "1.5.4"
 authors = ["Sami J. Mäkinen <sjm@iki.fi>"]
 edition = "2021"
 
 
 [features]
-default = ["esp32c3"]
+default = ["esp32s"]
 reset_settings = []
 esp32s = []
 esp32c3 = []
