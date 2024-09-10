@@ -1,0 +1,147 @@
+<!doctype html>
+<html>
+<head>
+    <meta charset="utf-8"/>
+    <title>ESP32 temperature probe</title>
+</head>
+
+<body>
+<h1>ESP32 temperature probe</h1>
+<h2>Settings</h2>
+<form action="/conf" method="POST" name="esp32cfg">
+    <table>
+        <tr>
+            <th><label for="port">Port (1-65535):</label></th>
+            <th><input name="port" type="text" value="{{port}}"></th>
+        </tr>
+
+        <tr>
+            <th><label for="retries">Retries:</label></th>
+            <th><input name="retries" type="text" value="{{retries}}"></th>
+        </tr>
+
+        <tr>
+            <th><label for="delay">Delay (secs):</label></th>
+            <th><input name="delay" type="text" value="{{delay}}"></th>
+        </tr>
+
+        <tr>
+            <th><label for="wifi_ssid">WiFi SSID:</label></th>
+            <th><input name="wifi_ssid" type="text" value="{{wifi_ssid}}"></th>
+        </tr>
+
+        <tr>
+            <th><label for="wifi_pass">WiFi password:</label></th>
+            <th><input name="wifi_pass" type="text" value="{{wifi_pass}}"></th>
+        </tr>
+
+        <tr>
+            <th><label for="v4dhcp">DHCP enabled:</label></th>
+            <th><input type="checkbox" name="v4dhcp" {% if v4dhcp %}checked{% endif %}></th>
+        </tr>
+
+        <tr>
+            <th><label for="v4addr">IPv4 addr:</label></th>
+            <th><input name="v4addr" type="text" value="{{v4addr}}"></th>
+        </tr>
+
+        <tr>
+            <th><label for="v4mask">IPv4 mask length (0-30):</label></th>
+            <th><input name="v4mask" type="text" value="{{v4mask}}"></th>
+        </tr>
+
+        <tr>
+            <th><label for="v4gw">IPv4 gateway:</label></th>
+            <th><input name="v4gw" type="text" value="{{v4gw}}"></th>
+        </tr>
+
+        <tr>
+            <th><label for="dns1">DNS 1:</label></th>
+            <th><input name="dns1" type="text" value="{{dns1}}"></th>
+        </tr>
+
+        <tr>
+            <th><label for="dns2">DNS 2:</label></th>
+            <th><input name="dns2" type="text" value="{{dns2}}"></th>
+        </tr>
+
+        <tr>
+            <th><label for="mqtt_enable">MQTT enable:</label></th>
+            <th><input type="checkbox" name="mqtt_enable" {% if mqtt_enable %}checked{% endif %}></th>
+        </tr>
+
+        <tr>
+            <th><label for="mqtt_url">MQTT URL:</label></th>
+            <th><input name="mqtt_url" type="text" value="{{mqtt_url}}"></th>
+        </tr>
+
+        <tr>
+            <th><label for="mqtt_topic">MQTT topic:</label></th>
+            <th><input name="mqtt_topic" type="text" value="{{mqtt_topic}}"></th>
+        </tr>
+    </table>
+    <input type="submit" value="Submit">
+</form>
+<hr>
+</body>
+
+</html>
+
+
+<script>
+    var postCfgDataAsJson = async ({
+                                       url,
+                                       formData
+                                   }) => {
+        const formObj = Object.fromEntries(formData.entries());
+        formObj.port = parseInt(formObj.port);
+        formObj.retries = parseInt(formObj.retries);
+        formObj.delay = parseInt(formObj.delay);
+        formObj.v4dhcp = (formObj.v4dhcp === "on");
+        formObj.v4mask = parseInt(formObj.v4mask);
+        formObj.mqtt_enable = (formObj.mqtt_enable === "on");
+        const formDataJsonString = JSON.stringify(formObj);
+
+        const fetchOptions = {
+            method: "POST",
+            mode: 'cors',
+            keepalive: false,
+            headers: {
+                'Accept': 'application/json',
+                'Content-Type': 'application/json',
+            },
+            body: formDataJsonString,
+        };
+        const response = await fetch(url, fetchOptions);
+
+        if (!response.ok) {
+            const errorMessage = await response.text();
+            throw new Error(errorMessage);
+        }
+
+        return response.json();
+    }
+
+    var handleCfgSubmit = async (event) => {
+        event.preventDefault();
+        const form = event.currentTarget;
+        const url = form.action;
+
+        try {
+            formData = new FormData(form);
+            const responseData = await postCfgDataAsJson({
+                url,
+                formData
+            });
+            console.log({
+                responseData
+            });
+        } catch (error) {
+            console.error(error);
+        }
+    }
+
+    document.querySelector("form[name='esp32cfg']")
+        .addEventListener("submit", handleCfgSubmit)
+
+</script>

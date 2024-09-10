@@ -60,11 +60,16 @@ async fn data_sender(
     state: Arc<Pin<Box<MyState>>>,
     mut client: mqtt::client::EspAsyncMqttClient,
 ) -> anyhow::Result<()> {
-    let mqtt_delay = state.config.read().await.mqtt_delay;
     let mqtt_topic = state.config.read().await.mqtt_topic.clone();
 
     loop {
-        sleep(Duration::from_secs(mqtt_delay)).await;
+        sleep(Duration::from_secs(5)).await;
+        {
+            let mut fresh_data = state.data_updated.write().await;
+            if !*fresh_data { continue; }
+            *fresh_data = false;
+        }
+
         {
             let data = state.data.read().await;
             for v in data.temperatures.iter().filter(|v| v.value > NO_TEMP) {
@@ -79,7 +84,9 @@ async fn data_sender(
                     )
                     .await
                 {
-                    error!("MQTT send error: {e}");
+                    let msg = format!("MQTT send error: {e}");
+                    error!("{msg}");
+                    bail!("{msg}");
                 }
             }
         }

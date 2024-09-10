@@ -2,8 +2,10 @@
 
 #![warn(clippy::large_futures)]
 
+use std::{net, sync::Arc};
+
 use esp_idf_hal::delay::FreeRtos;
-use esp_idf_hal::{gpio::IOPin, prelude::Peripherals};
+use esp_idf_hal::{gpio::{IOPin, Pull}, prelude::Peripherals};
 use esp_idf_svc::{
     eventloop::EspSystemEventLoop, hal::gpio, nvs, timer::EspTaskTimerService, wifi::WifiDriver,
 };
@@ -11,7 +13,6 @@ use esp_idf_sys::{self as _};
 use esp_idf_sys::{esp, esp_app_desc};
 use log::*;
 use one_wire_bus::OneWire;
-use std::{net, sync::Arc};
 use tokio::sync::RwLock;
 
 use esp32temp::*;
@@ -111,7 +112,9 @@ fn main() -> anyhow::Result<()> {
     let mut n_sensors = 0;
     let mut onewire_pins = Vec::with_capacity(onew_pins.len());
     for (i, (mut pin, name)) in onew_pins.into_iter().enumerate() {
-        let mut w = OneWire::new(gpio::PinDriver::input_output_od(&mut pin).unwrap()).unwrap();
+        let mut pin_drv = gpio::PinDriver::input_output_od(&mut pin).unwrap();
+        pin_drv.set_pull(Pull::Up).unwrap();
+        let mut w = OneWire::new(pin_drv).unwrap();
         if let Ok(devs) = scan_1wire(&mut w) {
             drop(w);
             n_sensors += devs.len();
@@ -148,6 +151,7 @@ fn main() -> anyhow::Result<()> {
         myid: RwLock::new("esp32temp".into()),
         sensors: RwLock::new(onewire_pins),
         data: RwLock::new(temp_data),
+        data_updated: RwLock::new(false),
         nvs: RwLock::new(nvs),
         reset: RwLock::new(false),
     });
@@ -175,8 +179,6 @@ fn main() -> anyhow::Result<()> {
     info!("main() finished, reboot.");
     FreeRtos::delay_ms(3000);
     esp_idf_hal::reset::restart();
-
-    Ok(())
 }
 
 // EOF

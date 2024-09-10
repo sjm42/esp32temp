@@ -1,12 +1,12 @@
 [package]
 name = "esp32temp"
-version = "1.5.5"
+version = "1.6.0"
 authors = ["Sami J. Mäkinen <sjm@iki.fi>"]
 edition = "2021"
 
 
 [features]
-default = ["esp32s"]
+default = ["esp32c3"]
 reset_settings = []
 esp32s = []
 esp32c3 = []
@@ -15,8 +15,10 @@ esp32c3 = []
 [dependencies]
 panic-halt = "0"
 anyhow = "1"
+askama = "0"
 axum = { version = "0", features = ["http1", "json"] }
 axum-macros = "0"
+chrono = "0"
 crc = "3"
 critical-section = { version = "1.1", features = ["std"] }
 embedded-hal = "1"
@@ -36,7 +38,6 @@ tower-http = { version = "0" }
 
 # these had to be fixed, negative temperatures were broken
 # also, migrated to embedded-hal 1.0
-
 ds18b20 = { git = "https://github.com/sjm42/ds18b20" }
 one-wire-bus = { git = "https://github.com/sjm42/one-wire-bus" }
 

@@ -1,13 +1,17 @@
 // apiserver.rs
 
-use axum::{extract::State, http::StatusCode, response::Html, routing::*, Json, Router};
-pub use axum_macros::debug_handler;
 use core::f32;
+use std::{net, net::SocketAddr, pin::Pin, sync::Arc};
+
+use askama::Template;
+use axum::{extract::State, http::StatusCode, response::Html, routing::*, Json, Router};
+use axum::body::Body;
+use axum::http::{header, Response};
+use axum::response::IntoResponse;
+pub use axum_macros::debug_handler;
 use log::*;
 use serde::Serialize;
-use std::{net, net::SocketAddr, pin::Pin, sync::Arc};
 use tokio::time::{sleep, Duration};
-
 // use tower_http::trace::TraceLayer;
 
 use crate::*;
@@ -55,15 +59,10 @@ pub async fn run_api_server(state: Arc<Pin<Box<MyState>>>) -> anyhow::Result<()>
     let addr = listen.parse::<SocketAddr>()?;
 
     let app = Router::new()
-        .route(
-            "/",
-            get({
-                let index = "<HTML></HTML>".to_string();
-                move || async { Html(index) }
-            }),
-        )
+        .route("/", get(get_index))
+        .route("/favicon.ico", get(get_favicon))
+        .route("/conf", get(get_conf).post(set_conf).options(options))
         .route("/read", get(get_temp))
-        .route("/conf", get(get_conf).post(set_conf))
         .route("/reset_conf", get(reset_conf))
         .with_state(state);
     // .layer(TraceLayer::new_for_http());
@@ -73,28 +72,57 @@ pub async fn run_api_server(state: Arc<Pin<Box<MyState>>>) -> anyhow::Result<()>
     Ok(axum::serve(listener, app.into_make_service()).await?)
 }
 
-pub async fn get_temp(
-    State(state): State<Arc<Pin<Box<MyState>>>>,
-) -> (StatusCode, Json<TempValues>) {
+
+pub async fn options(State(state): State<Arc<Pin<Box<MyState>>>>) -> Response<Body> {
     {
         let mut c = state.cnt.write().await;
         *c += 1;
-        info!("#{c} get_temp()");
+        info!("#{c} options()");
+    }
+    (
+        StatusCode::OK,
+        [
+            (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*"),
+            (header::ACCESS_CONTROL_ALLOW_METHODS, "get,post"),
+            (header::ACCESS_CONTROL_ALLOW_HEADERS, "content-type"),
+        ],
+    )
+        .into_response()
+}
+
+pub async fn get_index(State(state): State<Arc<Pin<Box<MyState>>>>) -> Response<Body> {
+    {
+        let mut c = state.cnt.write().await;
+        *c += 1;
+        info!("#{c} get_index()");
     }
 
-    let mut ret;
-    {
-        let data = state.data.read().await;
-        // info!("My current data:\n{data:#?}");
-        ret = TempValues::with_capacity(data.temperatures.len());
-        data.temperatures
-            .iter()
-            // do not return invalid values
-            .filter(|v| v.value > NO_TEMP)
-            .for_each(|v| ret.temperatures.push(v.clone()));
-    }
-    (StatusCode::OK, Json(ret))
+    let index = match state.config.read().await.clone().render() {
+        Err(e) => {
+            let err_msg = format!("Index template error: {e:?}\n");
+            error!("{err_msg}");
+            return (StatusCode::INTERNAL_SERVER_ERROR, err_msg).into_response();
+        }
+        Ok(s) => s,
+    };
+    (StatusCode::OK, Html(index)).into_response()
 }
+
+pub async fn get_favicon(State(state): State<Arc<Pin<Box<MyState>>>>) -> Response<Body> {
+    {
+        let mut c = state.cnt.write().await;
+        *c += 1;
+        info!("#{c} get_favicon()");
+    }
+    let favicon = include_bytes!("favicon.ico");
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "image/vnd.microsoft.icon")],
+        favicon.to_vec(),
+    )
+        .into_response()
+}
+
 
 pub async fn get_conf(State(state): State<Arc<Pin<Box<MyState>>>>) -> (StatusCode, Json<MyConfig>) {
     {
@@ -126,10 +154,35 @@ pub async fn set_conf(
         config.v4addr = net::Ipv4Addr::new(0, 0, 0, 0);
         config.v4mask = 0;
         config.v4gw = net::Ipv4Addr::new(0, 0, 0, 0);
+        config.dns1 = net::Ipv4Addr::new(0, 0, 0, 0);
+        config.dns2 = net::Ipv4Addr::new(0, 0, 0, 0);
     }
 
     info!("Saving new config to nvs...");
     Box::pin(save_conf(state, config)).await
+}
+
+pub async fn get_temp(
+    State(state): State<Arc<Pin<Box<MyState>>>>,
+) -> (StatusCode, Json<TempValues>) {
+    {
+        let mut c = state.cnt.write().await;
+        *c += 1;
+        info!("#{c} get_temp()");
+    }
+
+    let mut ret;
+    {
+        let data = state.data.read().await;
+        // info!("My current data:\n{data:#?}");
+        ret = TempValues::with_capacity(data.temperatures.len());
+        data.temperatures
+            .iter()
+            // do not return invalid values
+            .filter(|v| v.value > NO_TEMP)
+            .for_each(|v| ret.temperatures.push(v.clone()));
+    }
+    (StatusCode::OK, Json(ret))
 }
 
 pub async fn reset_conf(State(state): State<Arc<Pin<Box<MyState>>>>) -> (StatusCode, String) {

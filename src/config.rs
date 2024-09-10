@@ -1,13 +1,16 @@
 // config.rs
 
+use std::net;
+
 use anyhow::bail;
+use askama::Template;
 use crc::{Crc, CRC_32_ISCSI};
 use esp_idf_svc::nvs;
 use log::*;
 use serde::{Deserialize, Serialize};
-use std::net;
+
+
 pub const NVS_BUF_SIZE: usize = 256;
-pub const BOOT_FAIL_MAX: u8 = 4;
 
 const DEFAULT_API_PORT: u16 = 80;
 const DEFAULT_SENSOR_RETRIES: u32 = 4;
@@ -15,11 +18,9 @@ const DEFAULT_POLL_DELAY: u64 = 30;
 
 const CONFIG_NAME: &str = "cfg";
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, Template)]
+#[template(path = "index.html.ask", escape = "html")]
 pub struct MyConfig {
-    // boot fail count
-    pub bfc: u8,
-
     pub port: u16,
     pub retries: u32,
     pub delay: u64,
@@ -31,18 +32,17 @@ pub struct MyConfig {
     pub v4addr: net::Ipv4Addr,
     pub v4mask: u8,
     pub v4gw: net::Ipv4Addr,
+    pub dns1: net::Ipv4Addr,
+    pub dns2: net::Ipv4Addr,
 
     pub mqtt_enable: bool,
     pub mqtt_url: String,
     pub mqtt_topic: String,
-    pub mqtt_delay: u64,
 }
 
 impl Default for MyConfig {
     fn default() -> Self {
         Self {
-            bfc: 0,
-
             port: option_env!("API_PORT")
                 .unwrap_or("-")
                 .parse()
@@ -57,11 +57,12 @@ impl Default for MyConfig {
             v4addr: net::Ipv4Addr::new(0, 0, 0, 0),
             v4mask: 0,
             v4gw: net::Ipv4Addr::new(0, 0, 0, 0),
+            dns1: net::Ipv4Addr::new(0, 0, 0, 0),
+            dns2: net::Ipv4Addr::new(0, 0, 0, 0),
 
             mqtt_enable: false,
             mqtt_url: "mqtt://mqtt.local:1883".into(),
             mqtt_topic: "esp32temp".into(),
-            mqtt_delay: 60,
         }
     }
 }

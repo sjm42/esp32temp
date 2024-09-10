@@ -1,13 +1,16 @@
 // measure.rs
 
+use std::sync::Arc;
+
+use chrono::*;
 use embedded_hal::digital::{InputPin, OutputPin};
 use esp_idf_hal::{
     delay::{Ets, FreeRtos},
-    gpio,
+    gpio::{self, Pull},
 };
+use esp_idf_svc::sntp;
 use log::*;
 use one_wire_bus::{Address, OneWire, OneWireError, SearchState};
-use std::sync::Arc;
 use tokio::time::{sleep, Duration};
 
 use crate::*;
@@ -120,7 +123,40 @@ impl<E> From<OneWireError<E>> for MeasurementError<E> {
 }
 
 pub async fn poll_sensors(state: Arc<Pin<Box<MyState>>>) -> anyhow::Result<()> {
+    let mut cnt = 0;
+    let ntp = sntp::EspSntp::new_default()?;
     sleep(Duration::from_secs(10)).await;
+
+    loop {
+        if *state.wifi_up.read().await {
+            break;
+        }
+
+        if cnt > 300 {
+            // we did not get connected in one minute, reset
+            esp_idf_hal::reset::restart();
+        }
+        cnt += 1;
+        sleep(Duration::from_millis(200)).await;
+    }
+    info!("WiFi connected.");
+
+    cnt = 0;
+    loop {
+        if Utc::now().year() > 2020 && ntp.get_sync_status() == sntp::SyncStatus::Completed {
+            // we probably have NTP time now...
+            break;
+        }
+
+        if cnt > 300 {
+            // we did not get NTP time in one minute, reset
+            esp_idf_hal::reset::restart();
+        }
+        cnt += 1;
+        sleep(Duration::from_millis(200)).await;
+    }
+    info!("NTP ok.");
+
     let poll_delay = state.config.read().await.delay;
     let max_retry = state.config.read().await.retries;
     loop {
@@ -139,8 +175,9 @@ pub async fn poll_sensors(state: Arc<Pin<Box<MyState>>>) -> anyhow::Result<()> {
             let mut onewires = state.sensors.write().await;
             let mut i = 0;
             for onew in onewires.iter_mut() {
-                let mut w =
-                    OneWire::new(gpio::PinDriver::input_output_od(&mut onew.pin).unwrap()).unwrap();
+                let mut pin_drv = gpio::PinDriver::input_output_od(&mut onew.pin).unwrap();
+                pin_drv.set_pull(Pull::Up).unwrap();
+                let mut w = OneWire::new(pin_drv).unwrap();
                 match Box::pin(measure_temperatures(&mut w, &onew.ids, max_retry)).await {
                     Ok(meas) => {
                         info!("Onewire response {name}:\n{meas:#?}", name = onew.name);
@@ -163,6 +200,9 @@ pub async fn poll_sensors(state: Arc<Pin<Box<MyState>>>) -> anyhow::Result<()> {
                 drop(w);
                 sleep(Duration::from_millis(100)).await; // extra sleep
             }
+
+            let mut fresh_data = state.data_updated.write().await;
+            *fresh_data = true;
         }
 
         if do_reset {

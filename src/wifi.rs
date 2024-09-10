@@ -62,42 +62,11 @@ impl<'a> WifiLoop<'a> {
 
         if let Err(e) = Box::pin(self.initial_connect()).await {
             error!("WiFi connection failed: {e:?}");
-            {
-                // failed boot, increase boot fail counter or reset "factory" settings
-
-                let mut nvs = self.state.nvs.write().await;
-                let mut config = self.state.config.write().await;
-
-                let cnt = &mut config.bfc;
-                if *cnt > BOOT_FAIL_MAX {
-                    error!("Maximum boot fails. Resetting settings to default.");
-                    let c = MyConfig::default();
-                    if c.to_nvs(&mut nvs).is_ok() {
-                        info!("Successfully saved default config to nvs.");
-                    }
-                } else {
-                    *cnt += 1;
-                    config.to_nvs(&mut nvs).ok();
-                }
-            }
             error!("Resetting...");
             sleep(Duration::from_secs(5)).await;
             esp_idf_hal::reset::restart();
         }
 
-        {
-            // Successful startup, wifi connected: reset fail counter.
-            let mut config = self.state.config.write().await;
-            let cnt = &mut config.bfc;
-            if *cnt > 0 {
-                info!("Successful startup, resetting boot fail counter.");
-                *cnt = 0;
-                let mut nvs = self.state.nvs.write().await;
-                if config.to_nvs(&mut nvs).is_ok() {
-                    info!("Successfully saved config to nvs.");
-                }
-            }
-        }
         sleep(Duration::from_secs(2)).await;
 
         *self.state.ip_addr.write().await = self
@@ -126,6 +95,7 @@ impl<'a> WifiLoop<'a> {
                 .as_str()
                 .try_into()
                 .unwrap(),
+
             password: self
                 .state
                 .config
@@ -135,6 +105,7 @@ impl<'a> WifiLoop<'a> {
                 .as_str()
                 .try_into()
                 .unwrap(),
+
             ..Default::default()
         }))?;
 

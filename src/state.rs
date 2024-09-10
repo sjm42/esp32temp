@@ -24,6 +24,7 @@ pub struct MyState {
     pub myid: RwLock<String>,
     pub sensors: RwLock<Vec<MyOnewire>>,
     pub data: RwLock<TempValues>,
+    pub data_updated: RwLock<bool>,
     pub nvs: RwLock<nvs::EspNvs<nvs::NvsDefault>>,
     pub reset: RwLock<bool>,
 }
