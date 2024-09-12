@@ -820,7 +820,7 @@ dependencies = [
 
 [[package]]
 name = "esp32temp"
-version = "1.6.0"
+version = "1.7.2"
 dependencies = [
  "anyhow",
  "askama",

@@ -1,6 +1,6 @@
 [package]
 name = "esp32temp"
-version = "1.6.0"
+version = "1.7.2"
 authors = ["Sami J. Mäkinen <sjm@iki.fi>"]
 edition = "2021"
 
