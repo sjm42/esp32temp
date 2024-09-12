@@ -27,7 +27,7 @@ pub async fn measure_temperatures<P, E>(
     max_retry: u32,
 ) -> Result<Vec<Measurement>, MeasurementError<E>>
 where
-    P: OutputPin<Error = E> + InputPin<Error = E>,
+    P: OutputPin<Error=E> + InputPin<Error=E>,
     E: std::fmt::Debug,
 {
     let mut meas = Vec::new();
@@ -82,7 +82,7 @@ where
 
 pub fn scan_1wire<P, E>(one_wire_bus: &mut OneWire<P>) -> Result<Vec<Address>, MeasurementError<E>>
 where
-    P: OutputPin<Error = E> + InputPin<Error = E>,
+    P: OutputPin<Error=E> + InputPin<Error=E>,
 {
     let mut devices = Vec::new();
     let mut st: SearchState;
@@ -161,15 +161,6 @@ pub async fn poll_sensors(state: Arc<Pin<Box<MyState>>>) -> anyhow::Result<()> {
     let max_retry = state.config.read().await.retries;
     loop {
         info!("Polling 1-wire sensors");
-        let mut do_reset = false;
-
-        {
-            let mut reset = state.reset.write().await;
-            if *reset {
-                *reset = false;
-                do_reset = true;
-            }
-        }
 
         {
             let mut onewires = state.sensors.write().await;
@@ -203,10 +194,6 @@ pub async fn poll_sensors(state: Arc<Pin<Box<MyState>>>) -> anyhow::Result<()> {
 
             let mut fresh_data = state.data_updated.write().await;
             *fresh_data = true;
-        }
-
-        if do_reset {
-            esp_idf_hal::reset::restart();
         }
 
         sleep(Duration::from_secs(poll_delay)).await;

@@ -2,20 +2,23 @@
 
 #![warn(clippy::large_futures)]
 
-use std::{net, sync::Arc};
-
+use esp32temp::*;
 use esp_idf_hal::delay::FreeRtos;
+use esp_idf_hal::gpio::{AnyInputPin, Input, InputPin, PinDriver};
 use esp_idf_hal::{gpio::{IOPin, Pull}, prelude::Peripherals};
 use esp_idf_svc::{
     eventloop::EspSystemEventLoop, hal::gpio, nvs, timer::EspTaskTimerService, wifi::WifiDriver,
 };
-use esp_idf_sys::{self as _};
 use esp_idf_sys::{esp, esp_app_desc};
 use log::*;
 use one_wire_bus::OneWire;
+use std::time::Duration;
+use std::{net, sync::Arc};
 use tokio::sync::RwLock;
+use tokio::time::sleep;
 
-use esp32temp::*;
+const CONFIG_RESET_COUNT: i32 = 9;
+
 
 esp_app_desc!();
 
@@ -77,6 +80,7 @@ fn main() -> anyhow::Result<()> {
 
     let peripherals = Peripherals::take().unwrap();
     let pins = peripherals.pins;
+    let button = gpio::PinDriver::input(pins.gpio9.downgrade_input())?;
 
     #[cfg(feature = "esp32c3")]
     let onew_pins = Box::new([
@@ -89,7 +93,6 @@ fn main() -> anyhow::Result<()> {
         (pins.gpio6.downgrade(), "gpio6"),
         (pins.gpio7.downgrade(), "gpio7"),
         (pins.gpio8.downgrade(), "gpio8"),
-        (pins.gpio9.downgrade(), "gpio9"),
         (pins.gpio10.downgrade(), "gpio10"),
     ]);
 
@@ -145,7 +148,8 @@ fn main() -> anyhow::Result<()> {
 
     let state = Box::pin(MyState {
         config: RwLock::new(config),
-        cnt: RwLock::new(0),
+        uptime: RwLock::new(0),
+        api_cnt: RwLock::new(0),
         wifi_up: RwLock::new(false),
         ip_addr: RwLock::new(net::Ipv4Addr::new(0, 0, 0, 0)),
         myid: RwLock::new("esp32temp".into()),
@@ -168,17 +172,64 @@ fn main() -> anyhow::Result<()> {
 
             info!("Entering main loop...");
             tokio::select! {
-                _ = Box::pin(poll_sensors(shared_state.clone())) => {}
-                _ = Box::pin(run_mqtt(shared_state.clone())) => {}
-                _ = Box::pin(run_api_server(shared_state.clone())) => {}
-                _ = Box::pin(wifi_loop.run(wifidriver, sysloop, timer)) => {}
+                _ = Box::pin(poll_reset(shared_state.clone(), button)) => { error!("poll_reset() ended."); }
+                _ = Box::pin(poll_sensors(shared_state.clone())) => { error!("poll_sensors() ended."); }
+                _ = Box::pin(run_mqtt(shared_state.clone())) => { error!("run_mqtt() ended."); }
+                _ = Box::pin(run_api_server(shared_state.clone())) => { error!("run_api_server() ended."); }
+                _ = Box::pin(wifi_loop.run(wifidriver, sysloop, timer)) => { error!("wifi_loop() ended."); }
             };
         }));
 
-    // not actually returing from main() but we reboot instead
+    // not actually returning from main() but we reboot instead
     info!("main() finished, reboot.");
     FreeRtos::delay_ms(3000);
     esp_idf_hal::reset::restart();
+}
+
+async fn poll_reset(mut state: Arc<Pin<Box<MyState>>>, button: PinDriver<'_, AnyInputPin, Input>) -> anyhow::Result<()> {
+    let mut uptime: usize = 0;
+    loop {
+        sleep(Duration::from_secs(2)).await;
+
+        uptime += 2;
+        *(state.uptime.write().await) = uptime;
+
+        if *state.reset.read().await {
+            esp_idf_hal::reset::restart();
+        }
+
+        if button.is_low() {
+            Box::pin(reset_button(&mut state, &button)).await?;
+        }
+    }
+}
+
+async fn reset_button<'a, 'b>(
+    state: &mut Arc<std::pin::Pin<Box<MyState>>>,
+    button: &PinDriver<'a, AnyInputPin, Input>,
+) -> anyhow::Result<()> {
+    let mut reset_cnt = CONFIG_RESET_COUNT;
+
+    while button.is_low() {
+        // button is pressed and kept down, countdown and factory reset if reach zero
+        let msg = format!("Reset? {reset_cnt}");
+        error!("{msg}");
+
+        if reset_cnt == 0 {
+            // okay do factory reset now
+            error!("Factory resetting...");
+
+            let new_config = MyConfig::default();
+            new_config.to_nvs(&mut *state.nvs.write().await)?;
+            sleep(Duration::from_millis(2000)).await;
+            esp_idf_hal::reset::restart();
+        }
+
+        reset_cnt -= 1;
+        sleep(Duration::from_millis(500)).await;
+        continue;
+    }
+    Ok(())
 }
 
 // EOF

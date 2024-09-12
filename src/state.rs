@@ -18,7 +18,8 @@ unsafe impl Sync for MyOnewire {}
 
 pub struct MyState {
     pub config: RwLock<MyConfig>,
-    pub cnt: RwLock<u64>,
+    pub uptime: RwLock<usize>,
+    pub api_cnt: RwLock<u64>,
     pub wifi_up: RwLock<bool>,
     pub ip_addr: RwLock<Ipv4Addr>,
     pub myid: RwLock<String>,

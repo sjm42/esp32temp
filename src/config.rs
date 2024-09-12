@@ -9,12 +9,11 @@ use esp_idf_svc::nvs;
 use log::*;
 use serde::{Deserialize, Serialize};
 
-
 pub const NVS_BUF_SIZE: usize = 256;
 
 const DEFAULT_API_PORT: u16 = 80;
-const DEFAULT_SENSOR_RETRIES: u32 = 4;
-const DEFAULT_POLL_DELAY: u64 = 30;
+const DEFAULT_SENSOR_RETRIES: u32 = 5;
+const DEFAULT_POLL_DELAY: u64 = 60;
 
 const CONFIG_NAME: &str = "cfg";
 
