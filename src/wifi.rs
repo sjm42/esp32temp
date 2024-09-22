@@ -1,5 +1,7 @@
 // wifi.rs
 
+use std::sync::Arc;
+
 use anyhow::bail;
 use embedded_svc::wifi::{ClientConfiguration, Configuration};
 use esp_idf_svc::{
@@ -9,9 +11,7 @@ use esp_idf_svc::{
     timer::{EspTimerService, Task},
     wifi::{AsyncWifi, EspWifi, WifiDriver},
 };
-use esp_idf_sys::{self as _};
 use log::*;
-use std::sync::Arc;
 use tokio::time::{sleep, Duration};
 
 use crate::*;
@@ -49,6 +49,7 @@ impl<'a> WifiLoop<'a> {
             ip_configuration: ipv4::Configuration::Client(ipv4_config),
             ..netif::NetifConfiguration::wifi_default_client()
         })?;
+
         let mac = net_if.get_mac()?;
         *self.state.myid.write().await = format!(
             "esp32temp-{:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
@@ -67,16 +68,18 @@ impl<'a> WifiLoop<'a> {
             esp_idf_hal::reset::restart();
         }
 
-        sleep(Duration::from_secs(2)).await;
+        sleep(Duration::from_secs(10)).await;
 
-        *self.state.ip_addr.write().await = self
+        let netif = self
             .wifi
             .as_ref()
             .unwrap()
             .wifi()
-            .sta_netif()
-            .get_ip_info()?
-            .ip;
+            .sta_netif();
+        let ip_info = netif.get_ip_info()?;
+        *self.state.if_index.write().await = netif.get_index();
+        *self.state.ip_addr.write().await = ip_info.ip;
+        *self.state.ping_ip.write().await = Some(ip_info.subnet.gateway);
         *self.state.wifi_up.write().await = true;
 
         self.stay_connected().await

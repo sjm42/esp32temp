@@ -8,79 +8,37 @@
 
 <body onload="onLoad()">
 <h1>ESP32 temperature probe</h1>
-<div id="uptime">- - -</p></div>
+<div id="uptime">- - -</div>
 <h2>Settings</h2>
+{% let myform = [
+                    ("text", "port", port.to_string(), "Port (1-65535)"),
+                    ("text", "retries", retries.to_string(), "Retries"),
+                    ("text", "delay", delay.to_string(), "Delay (s)"),
+                    ("text", "wifi_ssid", wifi_ssid.to_string(), "WiFi SSID"),
+                    ("text", "wifi_pass", wifi_pass.to_string(), "WiFi password"),
+                    ("checkbox", "v4dhcp", v4dhcp.to_string(), "DHCP enabled"),
+                    ("text", "v4addr", v4addr.to_string(), "IPv4 address"),
+                    ("text", "v4mask", v4mask.to_string(), "IPv4 mask length (0-30)"),
+                    ("text", "v4gw", v4gw.to_string(), "IPv4 gateway"),
+                    ("text", "dns1", dns1.to_string(), "DNS 1"),
+                    ("text", "dns2", dns2.to_string(), "DNS 2"),
+                    ("checkbox", "mqtt_enable", mqtt_enable.to_string(), "MQTT enabled"),
+                    ("text", "mqtt_url", mqtt_url.to_string(), "MQTT URL"),
+                    ("text", "mqtt_topic", mqtt_topic.to_string(), "MQTT topic")
+                ] -%}
 <form action="/conf" method="POST" name="esp32cfg">
     <table>
+{%- for (type, name, value, descr) in myform %}
         <tr>
-            <th><label for="port">Port (1-65535):</label></th>
-            <th><input name="port" type="text" value="{{port}}"></th>
+{%- if type == "checkbox" %}
+            <th><label for="{{name}}">{{descr}}:</label></th>
+            <th><input name="{{name}}" type="{{type}}"{% if value == "true" %} checked{% endif %}></th>
+{%- else %}
+            <th><label for="{{name}}">{{descr}}:</label></th>
+            <th><input name="{{name}}" type="{{type}}" value="{{value}}"></th>
+{%- endif %}
         </tr>
-
-        <tr>
-            <th><label for="retries">Retries:</label></th>
-            <th><input name="retries" type="text" value="{{retries}}"></th>
-        </tr>
-
-        <tr>
-            <th><label for="delay">Delay (secs):</label></th>
-            <th><input name="delay" type="text" value="{{delay}}"></th>
-        </tr>
-
-        <tr>
-            <th><label for="wifi_ssid">WiFi SSID:</label></th>
-            <th><input name="wifi_ssid" type="text" value="{{wifi_ssid}}"></th>
-        </tr>
-
-        <tr>
-            <th><label for="wifi_pass">WiFi password:</label></th>
-            <th><input name="wifi_pass" type="text" value="{{wifi_pass}}"></th>
-        </tr>
-
-        <tr>
-            <th><label for="v4dhcp">DHCP enabled:</label></th>
-            <th><input type="checkbox" name="v4dhcp" {% if v4dhcp %}checked{% endif %}></th>
-        </tr>
-
-        <tr>
-            <th><label for="v4addr">IPv4 addr:</label></th>
-            <th><input name="v4addr" type="text" value="{{v4addr}}"></th>
-        </tr>
-
-        <tr>
-            <th><label for="v4mask">IPv4 mask length (0-30):</label></th>
-            <th><input name="v4mask" type="text" value="{{v4mask}}"></th>
-        </tr>
-
-        <tr>
-            <th><label for="v4gw">IPv4 gateway:</label></th>
-            <th><input name="v4gw" type="text" value="{{v4gw}}"></th>
-        </tr>
-
-        <tr>
-            <th><label for="dns1">DNS 1:</label></th>
-            <th><input name="dns1" type="text" value="{{dns1}}"></th>
-        </tr>
-
-        <tr>
-            <th><label for="dns2">DNS 2:</label></th>
-            <th><input name="dns2" type="text" value="{{dns2}}"></th>
-        </tr>
-
-        <tr>
-            <th><label for="mqtt_enable">MQTT enable:</label></th>
-            <th><input type="checkbox" name="mqtt_enable" {% if mqtt_enable %}checked{% endif %}></th>
-        </tr>
-
-        <tr>
-            <th><label for="mqtt_url">MQTT URL:</label></th>
-            <th><input name="mqtt_url" type="text" value="{{mqtt_url}}"></th>
-        </tr>
-
-        <tr>
-            <th><label for="mqtt_topic">MQTT topic:</label></th>
-            <th><input name="mqtt_topic" type="text" value="{{mqtt_topic}}"></th>
-        </tr>
+{%- endfor %}
     </table>
     <input type="submit" value="Submit">
 </form>

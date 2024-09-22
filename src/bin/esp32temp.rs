@@ -2,19 +2,17 @@
 
 #![warn(clippy::large_futures)]
 
+use std::{sync::Arc, time::Duration};
+
 use esp32temp::*;
 use esp_idf_hal::delay::FreeRtos;
-use esp_idf_hal::gpio::{AnyInputPin, Input, InputPin, PinDriver};
-use esp_idf_hal::{gpio::{IOPin, Pull}, prelude::Peripherals};
-use esp_idf_svc::{
-    eventloop::EspSystemEventLoop, hal::gpio, nvs, timer::EspTaskTimerService, wifi::WifiDriver,
-};
+use esp_idf_hal::gpio::{AnyInputPin, IOPin, Input, InputPin, PinDriver, Pull};
+use esp_idf_hal::prelude::Peripherals;
+use esp_idf_svc::{eventloop::EspSystemEventLoop, hal::gpio, nvs, ping, timer::EspTaskTimerService,
+                  wifi::WifiDriver};
 use esp_idf_sys::{esp, esp_app_desc};
 use log::*;
 use one_wire_bus::OneWire;
-use std::time::Duration;
-use std::{net, sync::Arc};
-use tokio::sync::RwLock;
 use tokio::time::sleep;
 
 const CONFIG_RESET_COUNT: i32 = 9;
@@ -146,19 +144,7 @@ fn main() -> anyhow::Result<()> {
         Some(nvs_default_partition),
     )?;
 
-    let state = Box::pin(MyState {
-        config: RwLock::new(config),
-        uptime: RwLock::new(0),
-        api_cnt: RwLock::new(0),
-        wifi_up: RwLock::new(false),
-        ip_addr: RwLock::new(net::Ipv4Addr::new(0, 0, 0, 0)),
-        myid: RwLock::new("esp32temp".into()),
-        sensors: RwLock::new(onewire_pins),
-        data: RwLock::new(temp_data),
-        data_updated: RwLock::new(false),
-        nvs: RwLock::new(nvs),
-        reset: RwLock::new(false),
-    });
+    let state = Box::pin(MyState::new(config, onewire_pins, temp_data, nvs));
     let shared_state = Arc::new(state);
 
     tokio::runtime::Builder::new_current_thread()
@@ -177,6 +163,7 @@ fn main() -> anyhow::Result<()> {
                 _ = Box::pin(run_mqtt(shared_state.clone())) => { error!("run_mqtt() ended."); }
                 _ = Box::pin(run_api_server(shared_state.clone())) => { error!("run_api_server() ended."); }
                 _ = Box::pin(wifi_loop.run(wifidriver, sysloop, timer)) => { error!("wifi_loop() ended."); }
+                _ = Box::pin(pinger(shared_state.clone())) => { error!("pinger() ended."); }
             };
         }));
 
@@ -230,6 +217,36 @@ async fn reset_button<'a, 'b>(
         continue;
     }
     Ok(())
+}
+
+async fn pinger(state: Arc<Pin<Box<MyState>>>) -> anyhow::Result<()> {
+    loop {
+        sleep(Duration::from_secs(300)).await;
+
+        if let Some(ping_ip) = *state.ping_ip.read().await {
+            let if_idx = *state.if_index.read().await;
+            if if_idx > 0 {
+                info!("Starting ping {ping_ip} (if_idx {if_idx})");
+                let conf = ping::Configuration {
+                    count: 3,
+                    interval: Duration::from_secs(1),
+                    timeout: Duration::from_secs(1),
+                    data_size: 64,
+                    tos: 0,
+                };
+                let mut ping = ping::EspPing::new(if_idx);
+                let res = ping.ping(ping_ip, &conf)?;
+                info!("Pinger result: {res:?}");
+                if res.received == 0 {
+                    error!("Ping failed, rebooting.");
+                    sleep(Duration::from_millis(2000)).await;
+                    esp_idf_hal::reset::restart();
+                }
+            } else {
+                error!("No if_index. wat?");
+            }
+        }
+    }
 }
 
 // EOF
