@@ -221,16 +221,14 @@ dependencies = [
 
 [[package]]
 name = "bindgen"
-version = "0.69.5"
+version = "0.71.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "271383c67ccabffb7381723dea0672a673f292304fcb45c01cc648c7a8d58088"
+checksum = "5f58bf3d7db68cfbac37cfc485a8d711e87e064c3d0fe0435b92f7a407f9d6b3"
 dependencies = [
  "bitflags 2.6.0",
  "cexpr",
  "clang-sys",
  "itertools",
- "lazy_static",
- "lazycell",
  "log",
  "prettyplease",
  "proc-macro2",
@@ -239,7 +237,6 @@ dependencies = [
  "rustc-hash",
  "shlex",
  "syn 2.0.94",
- "which",
 ]
 
 [[package]]
@@ -256,9 +253,9 @@ checksum = "b048fb63fd8b5923fc5aa7b340d8e156aec7ec02f0c78fa8a6ddc2613f6f71de"
 
 [[package]]
 name = "bstr"
-version = "1.11.1"
+version = "1.11.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "786a307d683a5bf92e6fd5fd69a7eb613751668d1d8d67d802846dfe367c62c8"
+checksum = "c94feba04f99cbce6558bbe1c18e38692a056981cb66c96f0878c2452aa28023"
 dependencies = [
  "memchr",
  "serde",
@@ -674,9 +671,9 @@ dependencies = [
 
 [[package]]
 name = "embuild"
-version = "0.32.0"
+version = "0.33.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a6e3e470e31fd4cae065d37f7cad56d42861ba1f9a35aa277694dee3d6b357c4"
+checksum = "28a8cbd9507fabce8f2741b9ca45da9e898cc2b0f1c2e53d21cb2436aeac811d"
 dependencies = [
  "anyhow",
  "bindgen",
@@ -746,9 +743,9 @@ dependencies = [
 
 [[package]]
 name = "esp-idf-hal"
-version = "0.44.1"
+version = "0.45.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bfa893ab84c4a7db5ca42ab45e2e09942412976fe3100a9dd72e56ba0a9a58b4"
+checksum = "fe0ccc4f052a54a06611227e3ff4fce499da99d0e13ec8da02db25aa1ddeca98"
 dependencies = [
  "atomic-waker",
  "embassy-sync",
@@ -770,9 +767,9 @@ dependencies = [
 
 [[package]]
 name = "esp-idf-svc"
-version = "0.49.1"
+version = "0.50.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ac42f9303792348e3217c570b0f0d8280a381d053bcb730c3018ec6873928513"
+checksum = "0ddcf40ffad4d0813b26e4828cca732c64bd0232b7dc347168c3182b0ba301cf"
 dependencies = [
  "embassy-futures",
  "embedded-hal-async",
@@ -780,6 +777,7 @@ dependencies = [
  "embuild",
  "enumset",
  "esp-idf-hal",
+ "futures-io",
  "heapless 0.8.0",
  "log",
  "num_enum",
@@ -788,14 +786,14 @@ dependencies = [
 
 [[package]]
 name = "esp-idf-sys"
-version = "0.35.0"
+version = "0.36.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bb97e3800686a4d64f3c0a9998be3d6f16c903bca2a425746e97f00ed28cde5e"
+checksum = "6527dd3034f4187cd70f7f66e140f9e56da89f3f54d8df4fad0420b4ff06ffe2"
 dependencies = [
  "anyhow",
- "bindgen",
  "build-time",
  "cargo_metadata",
+ "cmake",
  "const_format",
  "embuild",
  "envy",
@@ -1221,9 +1219,9 @@ dependencies = [
 
 [[package]]
 name = "itertools"
-version = "0.12.1"
+version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ba291022dbbd398a455acf126c1e341954079855bc60dfdda641363bd6922569"
+checksum = "413ee7dfc52ee1a4949ceeb7dbc8a33f2d6c088194d9f922fb8318faf1f01186"
 dependencies = [
  "either",
 ]
@@ -1243,18 +1241,6 @@ dependencies = [
  "once_cell",
  "wasm-bindgen",
 ]
-
-[[package]]
-name = "lazy_static"
-version = "1.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
-
-[[package]]
-name = "lazycell"
-version = "1.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "830d08ce1d1d941e6b30645f1a0eb5643013d835ce3779a5fc208261dbe10f55"
 
 [[package]]
 name = "libc"
@@ -1640,9 +1626,9 @@ checksum = "719b953e2095829ee67db738b3bfa9fa368c94900df327b3f07fe6e794d2fe1f"
 
 [[package]]
 name = "rustc-hash"
-version = "1.1.0"
+version = "2.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "08d43f7aa6b08d49f382cde6a7982047c3426db949b1424bc4b7ec9ae12c6ce2"
+checksum = "c7fb8039b3032c191086b10f11f319a6e99e1e82889c5cc6046f515c9db1d497"
 
 [[package]]
 name = "rustc_version"
