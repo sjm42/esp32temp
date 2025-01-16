@@ -574,9 +574,9 @@ checksum = "1f878075b9794c1e4ac788c95b728f26aa6366d32eeb10c7051389f898f7d067"
 
 [[package]]
 name = "embassy-sync"
-version = "0.6.1"
+version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3899a6e39fa3f54bf8aaf00979f9f9c0145a522f7244810533abbb748be6ce82"
+checksum = "8d2c8cdff05a7a51ba0087489ea44b0b1d97a296ca6b1d6d1a33ea7423d34049"
 dependencies = [
  "cfg-if",
  "critical-section",
@@ -743,9 +743,9 @@ dependencies = [
 
 [[package]]
 name = "esp-idf-hal"
-version = "0.45.1"
+version = "0.45.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7cfb51bf929d04e14a784b835ceaa0ba3777ebba6ef734cc33d20107ca229c7b"
+checksum = "775ce25171dc4f615146a4a27ed3a64c6fd99ced77d7112062f2b19bf933f5db"
 dependencies = [
  "atomic-waker",
  "embassy-sync",
@@ -767,9 +767,9 @@ dependencies = [
 
 [[package]]
 name = "esp-idf-svc"
-version = "0.50.1"
+version = "0.51.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "13c55828b65052e23941c1020081c9cc6ac99b86a1cfad8507993313f92aa399"
+checksum = "2bc07aaba257d28d54a96af005ca67d0b38876d8837f5d54a3e0547e100b219c"
 dependencies = [
  "embassy-futures",
  "embedded-hal-async",
