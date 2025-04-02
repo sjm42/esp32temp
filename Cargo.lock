@@ -519,9 +519,18 @@ dependencies = [
 
 [[package]]
 name = "defmt"
-version = "0.3.10"
+version = "0.3.100"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "86f6162c53f659f65d00619fe31f14556a6e9f8752ccc4a41bd177ffcf3d6130"
+checksum = "f0963443817029b2024136fc4dd07a5107eb8f977eaf18fcd1fdeb11306b64ad"
+dependencies = [
+ "defmt 1.0.1",
+]
+
+[[package]]
+name = "defmt"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "548d977b6da32fa1d1fda2876453da1e7df63ad0304c8b3dae4dbe7b96f39b78"
 dependencies = [
  "bitflags 1.3.2",
  "defmt-macros",
@@ -529,9 +538,9 @@ dependencies = [
 
 [[package]]
 name = "defmt-macros"
-version = "0.4.0"
+version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9d135dd939bad62d7490b0002602d35b358dce5fd9233a709d3c1ef467d4bde6"
+checksum = "3d4fc12a85bcf441cfe44344c4b72d58493178ce635338a3f3b78943aceb258e"
 dependencies = [
  "defmt-parser",
  "proc-macro-error2",
@@ -542,9 +551,9 @@ dependencies = [
 
 [[package]]
 name = "defmt-parser"
-version = "0.4.1"
+version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3983b127f13995e68c1e29071e5d115cd96f215ccb5e6812e3728cd6f92653b3"
+checksum = "10d60334b3b2e7c9d91ef8150abfb6fa4c1c39ebbcf4a81c2e346aad939fee3e"
 dependencies = [
  "thiserror 2.0.12",
 ]
@@ -655,7 +664,7 @@ version = "0.28.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a7770e30ab55cfbf954c00019522490d6ce26a3334bede05a732ba61010e98e0"
 dependencies = [
- "defmt",
+ "defmt 0.3.100",
  "embedded-io 0.6.1",
  "embedded-io-async",
  "enumset",
@@ -1652,9 +1661,9 @@ dependencies = [
 
 [[package]]
 name = "rustix"
-version = "1.0.3"
+version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e56a18552996ac8d29ecc3b190b4fdbb2d91ca4ec396de7bbffaf43f3d637e96"
+checksum = "d97817398dd4bb2e6da002002db259209759911da105da92bec29ccb12cf58bf"
 dependencies = [
  "bitflags 2.9.0",
  "errno",
@@ -1927,7 +1936,7 @@ dependencies = [
  "fastrand",
  "getrandom",
  "once_cell",
- "rustix 1.0.3",
+ "rustix 1.0.5",
  "windows-sys 0.59.0",
 ]
 
