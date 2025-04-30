@@ -364,9 +364,9 @@ checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
 
 [[package]]
 name = "chrono"
-version = "0.4.40"
+version = "0.4.41"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1a7964611d71df112cb1730f2ee67324fcf4d0fc6606acbbe9bfe06df124637c"
+checksum = "c469d952047f47f91b68d1cba3f10d63c11d73e4636f24f08daf0278abf01c4d"
 dependencies = [
  "android-tzdata",
  "iana-time-zone",
@@ -831,7 +831,7 @@ dependencies = [
  "esp-idf-svc",
  "esp-idf-sys",
  "futures",
- "heapless 0.9.0",
+ "heapless 0.8.0",
  "log",
  "mio 0.8.11",
  "one-wire-bus",
@@ -1073,16 +1073,6 @@ checksum = "0bfb9eb618601c89945a70e254898da93b13be0388091d42117462b265bb3fad"
 dependencies = [
  "hash32 0.3.1",
  "serde",
- "stable_deref_trait",
-]
-
-[[package]]
-name = "heapless"
-version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c603e226ffeb0a02e7700f43b4220af8036ae685907a235b4b1258fbf424f1d1"
-dependencies = [
- "hash32 0.3.1",
  "stable_deref_trait",
 ]
 
