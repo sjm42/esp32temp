@@ -706,9 +706,9 @@ dependencies = [
 
 [[package]]
 name = "enumset"
-version = "1.1.8"
+version = "1.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "41326c68a68a5d2235daf392dc0da9f342a6579284b1a12ce1e6fed6c95fe19e"
+checksum = "f50acec76c668b4621fe3694e5ddee53c8fae2a03410026f50947d195eb44dc1"
 dependencies = [
  "enumset_derive",
  "serde",
@@ -716,9 +716,9 @@ dependencies = [
 
 [[package]]
 name = "enumset_derive"
-version = "0.13.0"
+version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "86b0b3dd7a4444d18c9331b659b5f309577448a2e47f0c125fed64407bc0a82c"
+checksum = "588eaef9dbc5d72c5fa4edf162527e67dab5d14ba61519ef7c8e233d5bdc092c"
 dependencies = [
  "darling",
  "proc-macro2",
