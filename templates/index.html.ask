@@ -8,39 +8,52 @@
 
 <body onload="onLoad()">
 <h1>ESP32 temperature probe</h1>
+<p>Firmware version {{ crate::FW_VERSION }}</p>
+<p>OTA slot {{ askama::get_value::<String>("ota_slot")? }}</p>
 <div id="uptime">- - -</div>
+<hr>
+
 <h2>Settings</h2>
 {% let myform = [
-                    ("text", "port", port.to_string(), "Port (1-65535)"),
-                    ("text", "retries", retries.to_string(), "Retries"),
-                    ("text", "delay", delay.to_string(), "Delay (s)"),
-                    ("text", "wifi_ssid", wifi_ssid.to_string(), "WiFi SSID"),
-                    ("text", "wifi_pass", wifi_pass.to_string(), "WiFi password"),
-                    ("checkbox", "v4dhcp", v4dhcp.to_string(), "DHCP enabled"),
-                    ("text", "v4addr", v4addr.to_string(), "IPv4 address"),
-                    ("text", "v4mask", v4mask.to_string(), "IPv4 mask length (0-30)"),
-                    ("text", "v4gw", v4gw.to_string(), "IPv4 gateway"),
-                    ("text", "dns1", dns1.to_string(), "DNS 1"),
-                    ("text", "dns2", dns2.to_string(), "DNS 2"),
-                    ("checkbox", "mqtt_enable", mqtt_enable.to_string(), "MQTT enabled"),
-                    ("text", "mqtt_url", mqtt_url.to_string(), "MQTT URL"),
-                    ("text", "mqtt_topic", mqtt_topic.to_string(), "MQTT topic")
-                ] -%}
-<form action="/conf" method="POST" name="esp32cfg">
+    ("text", "port", port.to_string(), "Port (1-65535)"),
+    ("text", "wifi_ssid", wifi_ssid.to_string(), "WiFi SSID"),
+    ("checkbox", "wifi_wpa2ent", wifi_wpa2ent.to_string(), "WPA2 Enterprise"),
+    ("text", "wifi_username", wifi_username.to_string(), "WiFi username"),
+    ("password", "wifi_pass", wifi_pass.to_string(), "WiFi password"),
+    ("checkbox", "v4dhcp", v4dhcp.to_string(), "DHCP enabled"),
+    ("text", "v4addr", v4addr.to_string(), "IPv4 address"),
+    ("text", "v4mask", v4mask.to_string(), "IPv4 mask length (0-30)"),
+    ("text", "v4gw", v4gw.to_string(), "IPv4 gateway"),
+    ("text", "dns1", dns1.to_string(), "DNS 1"),
+    ("text", "dns2", dns2.to_string(), "DNS 2"),
+    ("checkbox", "mqtt_enable", mqtt_enable.to_string(), "MQTT enabled"),
+    ("text", "mqtt_url", mqtt_url.to_string(), "MQTT URL"),
+    ("text", "mqtt_topic", mqtt_topic.to_string(), "MQTT topic"),
+    ("text", "retries", retries.to_string(), "Retries"),
+    ("text", "delay", delay.to_string(), "Delay (s)")
+] -%}
+<form action="/config" method="POST" name="esp32cfg">
     <table>
-{%- for (type, name, value, descr) in myform %}
+{%- for (itype, name, value, descr) in myform %}
         <tr>
-{%- if type == "checkbox" %}
+{%- if *itype == "checkbox" %}
             <th><label for="{{name}}">{{descr}}:</label></th>
-            <th><input name="{{name}}" type="{{type}}"{% if value == "true" %} checked{% endif %}></th>
+            <th><input name="{{name}}" type="{{itype}}"{% if value == "true" %} checked{% endif %}></th>
 {%- else %}
             <th><label for="{{name}}">{{descr}}:</label></th>
-            <th><input name="{{name}}" type="{{type}}" value="{{value}}"></th>
+            <th><input name="{{name}}" type="{{itype}}" value="{{value}}"></th>
 {%- endif %}
         </tr>
 {%- endfor %}
     </table>
     <input type="submit" value="Submit">
+</form>
+<hr>
+
+<h2>Update firmware (DANGER)</h2>
+<form action="/fw" method="POST" name="esp32fw">
+  <input type="text" id="firmware" name="url">
+  <input type="submit" value="Update!">
 </form>
 <hr>
 </body>

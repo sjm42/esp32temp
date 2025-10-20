@@ -2,23 +2,24 @@
 
 #![warn(clippy::large_futures)]
 
-use std::{sync::Arc, time::Duration};
+use esp_idf_svc::{
+    eventloop::EspSystemEventLoop, hal::gpio, nvs, ota::EspOta, ping, timer::EspTaskTimerService,
+    wifi::WifiDriver,
+};
+use esp_idf_sys::esp;
+use one_wire_bus::OneWire;
 
 use esp32temp::*;
-use esp_idf_hal::delay::FreeRtos;
-use esp_idf_hal::gpio::{AnyInputPin, IOPin, Input, InputPin, PinDriver, Pull};
-use esp_idf_hal::prelude::Peripherals;
-use esp_idf_svc::{eventloop::EspSystemEventLoop, hal::gpio, nvs, ping, timer::EspTaskTimerService,
-                  wifi::WifiDriver};
-use esp_idf_sys::{esp, esp_app_desc};
-use log::*;
-use one_wire_bus::OneWire;
-use tokio::time::sleep;
 
 const CONFIG_RESET_COUNT: i32 = 9;
 
+// DANGER! DO NOT USE THIS until esp-idf-svc supports newer versions of ESP-IDF
+// - until then, only up to esp-idf 5.3.2 is supported with esp_app_desc!()
+// Without the macro usage up to esp-idf v5.4.2 is supported.
+// ESP-IDF version 5.5 requires updated esp-idf-svc crate to be released.
 
-esp_app_desc!();
+// use esp_idf_sys::esp_app_desc;
+// esp_app_desc!();
 
 fn main() -> anyhow::Result<()> {
     esp_idf_sys::link_patches();
@@ -39,7 +40,15 @@ fn main() -> anyhow::Result<()> {
     // this means that the code size is not 32bit aligned
     // and any small change to the code will likely fix it.
     info!("Hello.");
-    info!("Starting up.");
+    info!("Starting up, firmare version {}", FW_VERSION);
+    let ota_slot = {
+        let mut ota = EspOta::new()?;
+        let running_slot = ota.get_running_slot()?;
+        ota.mark_running_slot_valid()?;
+        let ota_slot = format!("{} ({:?})", &running_slot.label, running_slot.state);
+        info!("OTA slot: {ota_slot}");
+        ota_slot
+    };
 
     let sysloop = EspSystemEventLoop::take()?;
     let timer = EspTaskTimerService::new()?;
@@ -144,7 +153,7 @@ fn main() -> anyhow::Result<()> {
         Some(nvs_default_partition),
     )?;
 
-    let state = Box::pin(MyState::new(config, onewire_pins, temp_data, nvs));
+    let state = Box::pin(MyState::new(config, nvs, ota_slot, onewire_pins, temp_data));
     let shared_state = Arc::new(state);
 
     tokio::runtime::Builder::new_current_thread()
@@ -173,7 +182,10 @@ fn main() -> anyhow::Result<()> {
     esp_idf_hal::reset::restart();
 }
 
-async fn poll_reset(mut state: Arc<Pin<Box<MyState>>>, button: PinDriver<'_, AnyInputPin, Input>) -> anyhow::Result<()> {
+async fn poll_reset(
+    mut state: Arc<Pin<Box<MyState>>>,
+    button: PinDriver<'_, AnyInputPin, Input>,
+) -> anyhow::Result<()> {
     let mut uptime: usize = 0;
     loop {
         sleep(Duration::from_secs(2)).await;
@@ -191,7 +203,7 @@ async fn poll_reset(mut state: Arc<Pin<Box<MyState>>>, button: PinDriver<'_, Any
     }
 }
 
-async fn reset_button<'a, 'b>(
+async fn reset_button<'a>(
     state: &mut Arc<std::pin::Pin<Box<MyState>>>,
     button: &PinDriver<'a, AnyInputPin, Input>,
 ) -> anyhow::Result<()> {

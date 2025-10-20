@@ -1,13 +1,9 @@
 // config.rs
 
-use std::net;
-
-use anyhow::bail;
-use askama::Template;
 use crc::{Crc, CRC_32_ISCSI};
 use esp_idf_svc::nvs;
-use log::*;
-use serde::{Deserialize, Serialize};
+
+use crate::*;
 
 pub const NVS_BUF_SIZE: usize = 256;
 
@@ -26,6 +22,8 @@ pub struct MyConfig {
 
     pub wifi_ssid: String,
     pub wifi_pass: String,
+    pub wifi_wpa2ent: bool,
+    pub wifi_username: String,
 
     pub v4dhcp: bool,
     pub v4addr: net::Ipv4Addr,
@@ -46,11 +44,11 @@ impl Default for MyConfig {
                 .unwrap_or("-")
                 .parse()
                 .unwrap_or(DEFAULT_API_PORT),
-            retries: DEFAULT_SENSOR_RETRIES,
-            delay: DEFAULT_POLL_DELAY,
 
             wifi_ssid: option_env!("WIFI_SSID").unwrap_or("internet").into(),
             wifi_pass: option_env!("WIFI_PASS").unwrap_or("password").into(),
+            wifi_wpa2ent: false,
+            wifi_username: String::new(),
 
             v4dhcp: true,
             v4addr: net::Ipv4Addr::new(0, 0, 0, 0),
@@ -62,6 +60,9 @@ impl Default for MyConfig {
             mqtt_enable: false,
             mqtt_url: "mqtt://mqtt.local:1883".into(),
             mqtt_topic: "esp32temp".into(),
+
+            retries: DEFAULT_SENSOR_RETRIES,
+            delay: DEFAULT_POLL_DELAY,
         }
     }
 }

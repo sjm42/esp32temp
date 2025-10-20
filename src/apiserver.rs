@@ -1,56 +1,20 @@
 // apiserver.rs
 
-use core::f32;
-use std::{net, net::SocketAddr, pin::Pin, sync::Arc};
-
-use askama::Template;
-use axum::body::Body;
-use axum::http::{header, Response};
-use axum::response::IntoResponse;
-use axum::{extract::State, http::StatusCode, response::Html, routing::*, Json, Router};
+use axum::{
+    body::Body, extract::{Form, State},
+    http::{header, Response, StatusCode},
+    response::{Html, IntoResponse},
+    routing::*,
+    Json,
+    Router,
+};
 pub use axum_macros::debug_handler;
-use log::*;
-use serde::Serialize;
-use tokio::time::{sleep, Duration};
 // use tower_http::trace::TraceLayer;
+use embedded_svc::http::client::Client as HttpClient;
+use esp_idf_svc::{http::client::EspHttpConnection, io, ota::EspOta};
+use std::any::Any;
 
 use crate::*;
-
-#[derive(Clone, Debug, Serialize)]
-pub struct TempData {
-    pub iopin: String,
-    pub sensor: String,
-    pub value: f32,
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub struct TempValues {
-    pub temperatures: Vec<TempData>,
-}
-
-impl TempValues {
-    pub fn new() -> Self {
-        TempValues {
-            temperatures: Vec::new(),
-        }
-    }
-    pub fn with_capacity(c: usize) -> Self {
-        TempValues {
-            temperatures: Vec::with_capacity(c),
-        }
-    }
-}
-
-impl Default for TempValues {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub struct Uptime {
-    pub uptime: usize,
-}
 
 pub async fn run_api_server(state: Arc<Pin<Box<MyState>>>) -> anyhow::Result<()> {
     loop {
@@ -60,8 +24,8 @@ pub async fn run_api_server(state: Arc<Pin<Box<MyState>>>) -> anyhow::Result<()>
         sleep(Duration::from_secs(1)).await;
     }
 
-    let listen = format!("0.0.0.0:{}", state.config.read().await.port);
-    let addr = listen.parse::<SocketAddr>()?;
+    let listen = format!("0.0.0.0:{}", state.config.port);
+    let addr = listen.parse::<net::SocketAddr>()?;
 
     let app = Router::new()
         .route("/", get(get_index))
@@ -69,8 +33,9 @@ pub async fn run_api_server(state: Arc<Pin<Box<MyState>>>) -> anyhow::Result<()>
         .route("/form.js", get(get_formjs))
         .route("/uptime", get(get_uptime))
         .route("/read", get(get_temp))
-        .route("/conf", get(get_conf).post(set_conf).options(options))
-        .route("/reset_conf", get(reset_conf))
+        .route("/config", get(get_config).post(set_config).options(options))
+        .route("/reset_config", get(reset_config))
+        .route("/fw", post(update_fw).options(options))
         .with_state(state);
     // .layer(TraceLayer::new_for_http());
 
@@ -106,7 +71,8 @@ pub async fn get_index(State(state): State<Arc<Pin<Box<MyState>>>>) -> Response<
     };
     info!("#{cnt} get_index()");
 
-    let index = match state.config.read().await.clone().render() {
+    let value_tuple: (&str, &dyn Any) = ("ota_slot", &state.ota_slot.clone());
+    let index = match state.config.clone().render_with_values(&value_tuple) {
         Err(e) => {
             let err_msg = format!("Index template error: {e:?}\n");
             error!("{err_msg}");
@@ -151,9 +117,7 @@ pub async fn get_formjs(State(state): State<Arc<Pin<Box<MyState>>>>) -> Response
         .into_response()
 }
 
-pub async fn get_uptime(
-    State(state): State<Arc<Pin<Box<MyState>>>>,
-) -> (StatusCode, Json<Uptime>) {
+pub async fn get_uptime(State(state): State<Arc<Pin<Box<MyState>>>>) -> (StatusCode, Json<Uptime>) {
     let cnt = {
         let mut c = state.api_cnt.write().await;
         *c += 1;
@@ -189,8 +153,9 @@ pub async fn get_temp(
     (StatusCode::OK, Json(ret))
 }
 
-
-pub async fn get_conf(State(state): State<Arc<Pin<Box<MyState>>>>) -> (StatusCode, Json<MyConfig>) {
+pub async fn get_config(
+    State(state): State<Arc<Pin<Box<MyState>>>>,
+) -> (StatusCode, Json<MyConfig>) {
     let cnt = {
         let mut c = state.api_cnt.write().await;
         *c += 1;
@@ -198,10 +163,10 @@ pub async fn get_conf(State(state): State<Arc<Pin<Box<MyState>>>>) -> (StatusCod
     };
     info!("#{cnt} get_conf()");
 
-    (StatusCode::OK, Json(state.config.read().await.clone()))
+    (StatusCode::OK, Json(state.config.clone()))
 }
 
-pub async fn set_conf(
+pub async fn set_config(
     State(state): State<Arc<Pin<Box<MyState>>>>,
     Json(mut config): Json<MyConfig>,
 ) -> (StatusCode, String) {
@@ -231,7 +196,7 @@ pub async fn set_conf(
     Box::pin(save_conf(state, config)).await
 }
 
-pub async fn reset_conf(State(state): State<Arc<Pin<Box<MyState>>>>) -> (StatusCode, String) {
+pub async fn reset_config(State(state): State<Arc<Pin<Box<MyState>>>>) -> (StatusCode, String) {
     let cnt = {
         let mut c = state.api_cnt.write().await;
         *c += 1;
@@ -258,4 +223,31 @@ async fn save_conf(state: Arc<Pin<Box<MyState>>>, config: MyConfig) -> (StatusCo
         }
     }
 }
+
+async fn update_fw(
+    State(_state): State<Arc<Pin<Box<MyState>>>>,
+    Form(fw_update): Form<UpdateFirmware>,
+) -> Response<Body> {
+    info!("Firmware update: \n{fw_update:#?}");
+
+    let mut ota = EspOta::new().unwrap();
+    let mut client = HttpClient::wrap(EspHttpConnection::new(&Default::default()).unwrap());
+
+    let req = client.get(fw_update.url.as_str()).unwrap();
+    let resp = req.submit().unwrap();
+    if resp.status() != StatusCode::OK {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
+
+    let mut update = ota.initiate_update().unwrap();
+    let mut buffer = [0_u8; 8192];
+    io::utils::copy(resp, &mut update, &mut buffer).unwrap();
+    info!("Update done. Restarting...");
+    update.complete().unwrap();
+    esp_idf_svc::hal::reset::restart();
+
+    // not reached
+    // StatusCode::OK.into_response()
+}
+
 // EOF

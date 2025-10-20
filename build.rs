@@ -1,10 +1,10 @@
 // build.rs
 fn main() -> anyhow::Result<()> {
-    build_data::set_GIT_BRANCH();
-    build_data::set_GIT_COMMIT();
-    build_data::set_SOURCE_TIMESTAMP();
-    build_data::set_RUSTC_VERSION();
-    build_data::no_debug_rebuilds();
+    let _ = build_data::set_GIT_BRANCH();
+    let _ = build_data::set_GIT_COMMIT();
+    let _ = build_data::set_SOURCE_TIMESTAMP();
+    let _ = build_data::set_RUSTC_VERSION();
+    let _ = build_data::no_debug_rebuilds();
 
     // Necessary because of this issue: https://github.com/rust-lang/cargo/issues/9641
     // see also https://github.com/rust-lang/cargo/issues/9554

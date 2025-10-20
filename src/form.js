@@ -1,13 +1,18 @@
+// form.js for esp32temp
 var postCfgDataAsJson = async ({
                                    url, formData
                                }) => {
     const formObj = Object.fromEntries(formData.entries());
+    // convert integers
     formObj.port = parseInt(formObj.port);
+    formObj.v4mask = parseInt(formObj.v4mask);
     formObj.retries = parseInt(formObj.retries);
     formObj.delay = parseInt(formObj.delay);
+    // convert booleans
+    formObj.wifi_wpa2ent = (formObj.wifi_wpa2ent === "on");
     formObj.v4dhcp = (formObj.v4dhcp === "on");
-    formObj.v4mask = parseInt(formObj.v4mask);
     formObj.mqtt_enable = (formObj.mqtt_enable === "on");
+    // serialize to JSON
     const formDataJsonString = JSON.stringify(formObj);
 
     const fetchOptions = {
@@ -61,3 +66,5 @@ function onLoad() {
     // update_uptime();
     setInterval(update_uptime, 10e3);
 }
+
+// EOF

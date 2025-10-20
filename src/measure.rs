@@ -1,17 +1,8 @@
 // measure.rs
 
-use std::sync::Arc;
-
-use chrono::*;
 use embedded_hal::digital::{InputPin, OutputPin};
-use esp_idf_hal::{
-    delay::{Ets, FreeRtos},
-    gpio::{self, Pull},
-};
 use esp_idf_svc::sntp;
-use log::*;
 use one_wire_bus::{Address, OneWire, OneWireError, SearchState};
-use tokio::time::{sleep, Duration};
 
 use crate::*;
 
@@ -27,7 +18,7 @@ pub async fn measure_temperatures<P, E>(
     max_retry: u32,
 ) -> Result<Vec<Measurement>, MeasurementError<E>>
 where
-    P: OutputPin<Error=E> + InputPin<Error=E>,
+    P: OutputPin<Error = E> + InputPin<Error = E>,
     E: std::fmt::Debug,
 {
     let mut meas = Vec::new();
@@ -82,7 +73,7 @@ where
 
 pub fn scan_1wire<P, E>(one_wire_bus: &mut OneWire<P>) -> Result<Vec<Address>, MeasurementError<E>>
 where
-    P: OutputPin<Error=E> + InputPin<Error=E>,
+    P: OutputPin<Error = E> + InputPin<Error = E>,
 {
     let mut devices = Vec::new();
     let mut st: SearchState;
@@ -157,8 +148,8 @@ pub async fn poll_sensors(state: Arc<Pin<Box<MyState>>>) -> anyhow::Result<()> {
     }
     info!("NTP ok.");
 
-    let poll_delay = state.config.read().await.delay;
-    let max_retry = state.config.read().await.retries;
+    let poll_delay = state.config.delay;
+    let max_retry = state.config.retries;
     loop {
         info!("Polling 1-wire sensors");
 
@@ -199,5 +190,4 @@ pub async fn poll_sensors(state: Arc<Pin<Box<MyState>>>) -> anyhow::Result<()> {
         sleep(Duration::from_secs(poll_delay)).await;
     }
 }
-
 // EOF
