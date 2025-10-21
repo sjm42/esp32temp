@@ -146,6 +146,7 @@ pub async fn poll_sensors(state: Arc<Pin<Box<MyState>>>) -> anyhow::Result<()> {
         cnt += 1;
         sleep(Duration::from_millis(200)).await;
     }
+    *state.ntp_ok.write().await = true;
     info!("NTP ok.");
 
     let poll_delay = state.config.delay;
@@ -182,8 +183,11 @@ pub async fn poll_sensors(state: Arc<Pin<Box<MyState>>>) -> anyhow::Result<()> {
                 drop(w);
                 sleep(Duration::from_millis(100)).await; // extra sleep
             }
-
-            let mut fresh_data = state.data_updated.write().await;
+            let mut data = state.data.write().await;
+            let now = Utc::now();
+            data.timestamp = now.timestamp();
+            data.last_update = now.to_rfc2822().to_string();
+            let mut fresh_data = state.fresh_data.write().await;
             *fresh_data = true;
         }
 

@@ -186,12 +186,22 @@ async fn poll_reset(
     mut state: Arc<Pin<Box<MyState>>>,
     button: PinDriver<'_, AnyInputPin, Input>,
 ) -> anyhow::Result<()> {
-    let mut uptime: usize = 0;
+    // wait for NTP
     loop {
-        sleep(Duration::from_secs(2)).await;
+        sleep(Duration::from_secs(1)).await;
+        if *state.ntp_ok.read().await {
+            break;
+        }
+    }
 
-        uptime += 2;
-        *(state.uptime.write().await) = uptime;
+    let start_ts = Utc::now().timestamp();
+    loop {
+        sleep(Duration::from_secs(5)).await;
+
+        let uptime = Utc::now().timestamp() - start_ts;
+        state.data.write().await.uptime = uptime as u32;
+        state.data.write().await.uptime_s =
+            humantime::format_duration(Duration::new(uptime as u64, 0)).to_string();
 
         if *state.reset.read().await {
             esp_idf_hal::reset::restart();

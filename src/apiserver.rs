@@ -32,8 +32,11 @@ pub async fn run_api_server(state: Arc<Pin<Box<MyState>>>) -> anyhow::Result<()>
         .route("/favicon.ico", get(get_favicon))
         .route("/form.js", get(get_formjs))
         .route("/uptime", get(get_uptime))
-        .route("/read", get(get_temp))
-        .route("/config", get(get_config).post(set_config).options(options))
+        .route("/temp", get(get_temp))
+        .route(
+            "/config",
+            get(get_config).post(post_config).options(options),
+        )
         .route("/reset_config", get(reset_config))
         .route("/fw", post(update_fw).options(options))
         .with_state(state);
@@ -125,8 +128,11 @@ pub async fn get_uptime(State(state): State<Arc<Pin<Box<MyState>>>>) -> (StatusC
     };
     info!("#{cnt} get_uptime()");
 
-    let uptime = *state.uptime.read().await;
-    (StatusCode::OK, Json(Uptime { uptime }))
+    let uptime = Uptime {
+        uptime: state.data.read().await.uptime,
+        uptime_s: state.data.read().await.uptime_s.clone(),
+    };
+    (StatusCode::OK, Json(uptime))
 }
 
 pub async fn get_temp(
@@ -139,17 +145,23 @@ pub async fn get_temp(
     };
     info!("#{cnt} get_temp()");
 
-    let mut ret;
-    {
+    let ret = {
         let data = state.data.read().await;
         // info!("My current data:\n{data:#?}");
-        ret = TempValues::with_capacity(data.temperatures.len());
-        data.temperatures
-            .iter()
-            // do not return invalid values
-            .filter(|v| v.value > NO_TEMP)
-            .for_each(|v| ret.temperatures.push(v.clone()));
-    }
+        TempValues {
+            timestamp: data.timestamp,
+            last_update: data.last_update.clone(),
+            uptime: data.uptime,
+            uptime_s: data.uptime_s.clone(),
+            temperatures: data
+                .temperatures
+                .iter()
+                // do not return invalid values
+                .filter(|v| v.value > NO_TEMP)
+                .cloned()
+                .collect::<Vec<TempData>>(),
+        }
+    };
     (StatusCode::OK, Json(ret))
 }
 
@@ -166,7 +178,7 @@ pub async fn get_config(
     (StatusCode::OK, Json(state.config.clone()))
 }
 
-pub async fn set_config(
+pub async fn post_config(
     State(state): State<Arc<Pin<Box<MyState>>>>,
     Json(mut config): Json<MyConfig>,
 ) -> (StatusCode, String) {
@@ -229,6 +241,9 @@ async fn update_fw(
     Form(fw_update): Form<UpdateFirmware>,
 ) -> Response<Body> {
     info!("Firmware update: \n{fw_update:#?}");
+    if !fw_update.url.starts_with("http://") {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
 
     let mut ota = EspOta::new().unwrap();
     let mut client = HttpClient::wrap(EspHttpConnection::new(&Default::default()).unwrap());

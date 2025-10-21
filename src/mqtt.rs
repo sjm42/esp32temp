@@ -59,10 +59,10 @@ async fn data_sender(
 
     loop {
         sleep(Duration::from_secs(5)).await;
-        let uptime = *(state.uptime.read().await);
+        let uptime = state.data.read().await.uptime;
 
         {
-            let mut fresh_data = state.data_updated.write().await;
+            let mut fresh_data = state.fresh_data.write().await;
             if !*fresh_data {
                 continue;
             }

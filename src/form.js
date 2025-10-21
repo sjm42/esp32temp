@@ -59,7 +59,7 @@ async function update_uptime() {
     var url = "/uptime";
     const response = await fetch(url);
     const json = JSON.parse(await response.text());
-    o.innerHTML = "<p>Uptime: " + json.uptime + " </p>";
+    o.innerHTML = `<p>Uptime: ${json.uptime} (${json.uptime_s}) </p>`;
 }
 
 function onLoad() {

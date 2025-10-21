@@ -50,17 +50,29 @@ pub struct TempData {
 
 #[derive(Clone, Debug, Serialize)]
 pub struct TempValues {
+    pub timestamp: i64,
+    pub last_update: String,
+    pub uptime: u32,
+    pub uptime_s: String,
     pub temperatures: Vec<TempData>,
 }
 
 impl TempValues {
     pub fn new() -> Self {
         TempValues {
+            timestamp: 0,
+            last_update: "-".to_string(),
+            uptime: 0,
+            uptime_s: "-".to_string(),
             temperatures: Vec::new(),
         }
     }
     pub fn with_capacity(c: usize) -> Self {
         TempValues {
+            timestamp: 0,
+            last_update: "-".to_string(),
+            uptime: 0,
+            uptime_s: "-".to_string(),
             temperatures: Vec::with_capacity(c),
         }
     }
@@ -74,7 +86,8 @@ impl Default for TempValues {
 
 #[derive(Clone, Debug, Serialize)]
 pub struct Uptime {
-    pub uptime: usize,
+    pub uptime: u32,
+    pub uptime_s: String,
 }
 
 #[derive(Debug, Deserialize)]
