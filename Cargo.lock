@@ -777,7 +777,7 @@ dependencies = [
 
 [[package]]
 name = "esp32temp"
-version = "1.8.1"
+version = "1.8.2"
 dependencies = [
  "anyhow",
  "askama",
@@ -798,7 +798,6 @@ dependencies = [
  "one-wire-bus",
  "postcard",
  "serde",
- "serde_json",
  "tokio",
  "tracing",
 ]

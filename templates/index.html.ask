@@ -4,13 +4,37 @@
   <meta charset="utf-8"/>
   <title>ESP32 temperature probe</title>
   <script src="./form.js"></script>
+  <style type="text/css">
+          body {
+              background-color: white;
+              font-family: serif;
+          }
+          table {
+              display: block;
+              overflow-x: auto;
+              white-space: nowrap;
+              border: 0px;
+          }
+          tr:nth-child(even) {
+              background-color: #f0f0f0;
+          }
+          th,
+          td {
+              text-align: left;
+              vertical-align: top;
+              padding-top: 3px;
+              padding-bottom: 3px;
+              padding-left: 8px;
+              padding-right: 8px;
+          }
+      </style>
 </head>
 
-<body onload="onLoad()">
+<body>
 <h1>ESP32 temperature probe</h1>
 <p>Firmware version {{ crate::FW_VERSION }}</p>
 <p>OTA slot {{ askama::get_value::<String>("ota_slot")? }}</p>
-<div id="uptime">- - -</div>
+<div id="uptime"><p>Uptime: - - -</p></div>
 <hr>
 
 <h2>Settings</h2>
@@ -48,13 +72,20 @@
     </table>
     <input type="submit" value="Submit">
 </form>
-<hr>
+<br>
 
+<hr>
 <h2>Update firmware (DANGER)</h2>
 <form action="/fw" method="POST" name="esp32fw">
   <input type="text" id="firmware" name="url">
   <input type="submit" value="Update!">
 </form>
+<br>
+
+<hr>
+<h2>Temperatures</h2>
+<div id="temperatures">- - -<br></div>
+<br>
 <hr>
 </body>
 </html>
