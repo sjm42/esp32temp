@@ -17,7 +17,7 @@ pub struct MyState {
     pub config: MyConfig,
     pub ota_slot: String,
 
-    pub api_cnt: RwLock<u64>,
+    pub api_cnt: AtomicU32,
     pub wifi_up: RwLock<bool>,
     pub ntp_ok: RwLock<bool>,
     pub if_index: RwLock<u32>,
@@ -42,7 +42,7 @@ impl MyState {
         MyState {
             config,
             ota_slot,
-            api_cnt: RwLock::new(0),
+            api_cnt: 0.into(),
             wifi_up: RwLock::new(false),
             ntp_ok: RwLock::new(false),
             if_index: RwLock::new(0),

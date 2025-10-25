@@ -1,7 +1,14 @@
 // lib.rs
 #![warn(clippy::large_futures)]
 
-pub use std::{net, pin::Pin, sync::Arc};
+pub use std::{
+    net,
+    pin::Pin,
+    sync::{
+        atomic::{AtomicU32, Ordering},
+        Arc,
+    },
+};
 
 pub use anyhow::bail;
 use askama::Template;

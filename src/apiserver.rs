@@ -48,11 +48,7 @@ pub async fn run_api_server(state: Arc<Pin<Box<MyState>>>) -> anyhow::Result<()>
 }
 
 pub async fn options(State(state): State<Arc<Pin<Box<MyState>>>>) -> Response<Body> {
-    let cnt = {
-        let mut c = state.api_cnt.write().await;
-        *c += 1;
-        *c
-    };
+    let cnt = state.api_cnt.fetch_add(1, Ordering::Relaxed);
     info!("#{cnt} options()");
 
     (
@@ -67,11 +63,7 @@ pub async fn options(State(state): State<Arc<Pin<Box<MyState>>>>) -> Response<Bo
 }
 
 pub async fn get_index(State(state): State<Arc<Pin<Box<MyState>>>>) -> Response<Body> {
-    let cnt = {
-        let mut c = state.api_cnt.write().await;
-        *c += 1;
-        *c
-    };
+    let cnt = state.api_cnt.fetch_add(1, Ordering::Relaxed);
     info!("#{cnt} get_index()");
 
     let value_tuple: (&str, &dyn Any) = ("ota_slot", &state.ota_slot.clone());
@@ -87,11 +79,7 @@ pub async fn get_index(State(state): State<Arc<Pin<Box<MyState>>>>) -> Response<
 }
 
 pub async fn get_favicon(State(state): State<Arc<Pin<Box<MyState>>>>) -> Response<Body> {
-    let cnt = {
-        let mut c = state.api_cnt.write().await;
-        *c += 1;
-        *c
-    };
+    let cnt = state.api_cnt.fetch_add(1, Ordering::Relaxed);
     info!("#{cnt} get_favicon()");
 
     let favicon = include_bytes!("favicon.ico");
@@ -104,11 +92,7 @@ pub async fn get_favicon(State(state): State<Arc<Pin<Box<MyState>>>>) -> Respons
 }
 
 pub async fn get_formjs(State(state): State<Arc<Pin<Box<MyState>>>>) -> Response<Body> {
-    let cnt = {
-        let mut c = state.api_cnt.write().await;
-        *c += 1;
-        *c
-    };
+    let cnt = state.api_cnt.fetch_add(1, Ordering::Relaxed);
     info!("#{cnt} get_formjs()");
 
     let formjs = include_bytes!("form.js");
@@ -121,11 +105,7 @@ pub async fn get_formjs(State(state): State<Arc<Pin<Box<MyState>>>>) -> Response
 }
 
 pub async fn get_uptime(State(state): State<Arc<Pin<Box<MyState>>>>) -> (StatusCode, Json<Uptime>) {
-    let cnt = {
-        let mut c = state.api_cnt.write().await;
-        *c += 1;
-        *c
-    };
+    let cnt = state.api_cnt.fetch_add(1, Ordering::Relaxed);
     info!("#{cnt} get_uptime()");
 
     let uptime = Uptime {
@@ -138,11 +118,7 @@ pub async fn get_uptime(State(state): State<Arc<Pin<Box<MyState>>>>) -> (StatusC
 pub async fn get_temp(
     State(state): State<Arc<Pin<Box<MyState>>>>,
 ) -> (StatusCode, Json<TempValues>) {
-    let cnt = {
-        let mut c = state.api_cnt.write().await;
-        *c += 1;
-        *c
-    };
+    let cnt = state.api_cnt.fetch_add(1, Ordering::Relaxed);
     info!("#{cnt} get_temp()");
 
     let ret = {
@@ -168,13 +144,8 @@ pub async fn get_temp(
 pub async fn get_config(
     State(state): State<Arc<Pin<Box<MyState>>>>,
 ) -> (StatusCode, Json<MyConfig>) {
-    let cnt = {
-        let mut c = state.api_cnt.write().await;
-        *c += 1;
-        *c
-    };
+    let cnt = state.api_cnt.fetch_add(1, Ordering::Relaxed);
     info!("#{cnt} get_conf()");
-
     (StatusCode::OK, Json(state.config.clone()))
 }
 
@@ -182,11 +153,7 @@ pub async fn post_config(
     State(state): State<Arc<Pin<Box<MyState>>>>,
     Json(mut config): Json<MyConfig>,
 ) -> (StatusCode, String) {
-    let cnt = {
-        let mut c = state.api_cnt.write().await;
-        *c += 1;
-        *c
-    };
+    let cnt = state.api_cnt.fetch_add(1, Ordering::Relaxed);
     info!("#{cnt} set_conf()");
 
     if config.v4mask > 30 {
@@ -209,11 +176,7 @@ pub async fn post_config(
 }
 
 pub async fn reset_config(State(state): State<Arc<Pin<Box<MyState>>>>) -> (StatusCode, String) {
-    let cnt = {
-        let mut c = state.api_cnt.write().await;
-        *c += 1;
-        *c
-    };
+    let cnt = state.api_cnt.fetch_add(1, Ordering::Relaxed);
     info!("#{cnt} reset_conf()");
 
     info!("Saving  default config to nvs...");
@@ -237,9 +200,12 @@ async fn save_conf(state: Arc<Pin<Box<MyState>>>, config: MyConfig) -> (StatusCo
 }
 
 async fn update_fw(
-    State(_state): State<Arc<Pin<Box<MyState>>>>,
+    State(state): State<Arc<Pin<Box<MyState>>>>,
     Form(fw_update): Form<UpdateFirmware>,
 ) -> Response<Body> {
+    let cnt = state.api_cnt.fetch_add(1, Ordering::Relaxed);
+    info!("#{cnt} update_fw()");
+
     info!("Firmware update: \n{fw_update:#?}");
     if !fw_update.url.starts_with("http://") {
         return StatusCode::BAD_REQUEST.into_response();
