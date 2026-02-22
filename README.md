@@ -31,12 +31,19 @@ Adding support for other ESP32 boards is mostly a matter of defining a new featu
 Debian/Ubuntu packages and Rust bootstrap example:
 
 ```bash
-sudo apt -y install build-essential curl git libssl-dev libudev-dev pkg-config python3-venv
+sudo apt -y install build-essential curl git libssl-dev libudev-dev pkg-config python3-venv clang-18
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+chmod 755 rustup.sh
+./rustup.sh
+
 . "$HOME/.cargo/env"
 rustup toolchain add nightly
-cargo install espup ldproxy espflash
 espup install
+
+cargo install espmonitor espup ldproxy flip-link cargo-espflash espflash
+
+# optional & useful
+cargo install cargo-binutils cargo-embed cargo-flash cargo-generate cargo-update probe-run
 ```
 
 ### Utility Scripts
@@ -55,44 +62,6 @@ Hardware-specific scripts:
 
 ./make_ota_image_c3
 ./make_ota_image_wroom32
-```
-
-### What Each Script Does
-
-- `flash_c3`: `cargo run -r` using the default target/feature (`riscv32imc-esp-espidf`, `esp32-c3`)
-- `flash_wroom32`:
-  `MCU=esp32 cargo +esp run -r --target xtensa-esp32-espidf --no-default-features --features=esp-wroom-32`
-- `make_ota_image_c3`: release build + `espflash save-image` to `firmware-c3.bin`
-- `make_ota_image_wroom32`: Xtensa release build + `espflash save-image` to `firmware-wroom32.bin`
-
-### Manual Build Examples
-
-```bash
-# ESP32-C3 (default)
-cargo build -r
-
-# ESP-WROOM-32
-MCU=esp32 cargo +esp build -r --target xtensa-esp32-espidf --no-default-features --features esp-wroom-32
-```
-
-### Manual Flash Examples
-
-```bash
-# ESP32-C3
-cargo run -r
-
-# ESP-WROOM-32
-MCU=esp32 cargo +esp run -r --target xtensa-esp32-espidf --no-default-features --features esp-wroom-32
-```
-
-### Manual Lint Examples
-
-```bash
-# ESP32-C3 (default feature set)
-cargo clippy
-
-# ESP-WROOM-32 feature set
-MCU=esp32 cargo +esp clippy --target xtensa-esp32-espidf --no-default-features --features esp-wroom-32
 ```
 
 Tooling updates (optional):
