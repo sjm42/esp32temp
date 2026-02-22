@@ -1,12 +1,12 @@
 // apiserver.rs
 
 use axum::{
-    body::Body, extract::{Form, State},
-    http::{header, Response, StatusCode},
+    Json, Router,
+    body::Body,
+    extract::{Form, State},
+    http::{Response, StatusCode, header},
     response::{Html, IntoResponse},
     routing::*,
-    Json,
-    Router,
 };
 pub use axum_macros::debug_handler;
 // use tower_http::trace::TraceLayer;
@@ -31,6 +31,7 @@ pub async fn run_api_server(state: Arc<Pin<Box<MyState>>>) -> anyhow::Result<()>
         .route("/", get(get_index))
         .route("/favicon.ico", get(get_favicon))
         .route("/form.js", get(get_formjs))
+        .route("/index.css", get(get_indexcss))
         .route("/uptime", get(get_uptime))
         .route("/temp", get(get_temp))
         .route(
@@ -100,6 +101,19 @@ pub async fn get_formjs(State(state): State<Arc<Pin<Box<MyState>>>>) -> Response
         StatusCode::OK,
         [(header::CONTENT_TYPE, "text/javascript")],
         formjs.to_vec(),
+    )
+        .into_response()
+}
+
+pub async fn get_indexcss(State(state): State<Arc<Pin<Box<MyState>>>>) -> Response<Body> {
+    let cnt = state.api_cnt.fetch_add(1, Ordering::Relaxed);
+    info!("#{cnt} get_indexcss()");
+
+    let indexcss = include_bytes!("index.css");
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "text/css; charset=utf-8")],
+        indexcss.to_vec(),
     )
         .into_response()
 }

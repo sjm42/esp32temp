@@ -1,6 +1,0 @@
-#!/bin/sh
-set -e
-set -x
-cargo build -r
-espflash save-image --chip esp32c3 --partition-table ./partitions.csv ./target/riscv32imc-esp-espidf/release/esp32temp firmware.bin
-# EOF

@@ -1,5 +1,4 @@
 /.embuild
 /target
-/.idea
 /env.sh
-/firmware.bin
+/*.bin

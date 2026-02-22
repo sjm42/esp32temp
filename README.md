@@ -5,78 +5,103 @@ Temperature measurement with ESP32 and DS18B20 sensor(s).
 Provides a web interface for monitoring temperatures and configuring the device,
 with optional MQTT publishing for IoT integration. Supports over-the-air (OTA) firmware updates.
 
-## How to build it
+## Hardware Targets
 
-This has been tested on a freshly installed Debian 12 system.
-It should not be too hard to adapt for other distros out there.
+This firmware supports two hardware targets using Cargo features and target-specific build commands:
 
-First install OS dependencies for building the bits and pieces, and then install Rust itself.
+- **ESP32-C3** (RISC-V) via feature `esp32-c3` (default)
+- **ESP-WROOM-32** (Xtensa ESP32) via feature `esp-wroom-32`
 
-```lang=bash
+Factory reset button GPIO differs by target:
+
+- `esp32-c3`: GPIO9
+- `esp-wroom-32`: GPIO0
+
+OneWire probe pin lists are selected with `#[cfg(feature = "...")]` in `src/bin/esp32temp.rs`.
+Adding support for other ESP32 boards is mostly a matter of defining a new feature and pin map there.
+
+## Building & Flashing
+
+### Prerequisites
+
+- Rust nightly with `rust-src` (default path in `rust-toolchain.toml`)
+- ESP tools: `espflash`, `ldproxy`, `espup`
+- Xtensa builds (`ESP-WROOM-32`) also require the `esp` Rust toolchain (`cargo +esp`)
+
+Debian/Ubuntu packages and Rust bootstrap example:
+
+```bash
 sudo apt -y install build-essential curl git libssl-dev libudev-dev pkg-config python3-venv
-
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs > rustup.sh
-chmod 755 rustup.sh
-./rustup.sh
-
-. $HOME/.cargo/env
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+. "$HOME/.cargo/env"
 rustup toolchain add nightly
-```
-
-Then install a bunch of tools for cross compiling, flashing etc.
-
-```lang=bash
-# optional & useful
-cargo install cargo-binutils cargo-embed cargo-flash cargo-generate cargo-update probe-run
-
-cargo install espmonitor espup ldproxy flip-link
-cargo install cargo-espflash --version 3.0.0-rc.2
-cargo install espflash --version 3.0.0-rc.2
+cargo install espup ldproxy espflash
 espup install
 ```
 
-Now actually obtain the source code and build out firmware.
+### Utility Scripts
 
-```lang=bash
-mkdir $HOME/git && cd $HOME/git
-git clone https://github.com/sjm42/esp32temp.git
-cd esp32temp
+Optional helper environment file:
 
+```bash
+source env.sh   # WIFI_SSID/WIFI_PASS defaults for build-time config
+```
+
+Hardware-specific scripts:
+
+```bash
+./flash_c3
+./flash_wroom32
+
+./make_ota_image_c3
+./make_ota_image_wroom32
+```
+
+### What Each Script Does
+
+- `flash_c3`: `cargo run -r` using the default target/feature (`riscv32imc-esp-espidf`, `esp32-c3`)
+- `flash_wroom32`:
+  `MCU=esp32 cargo +esp run -r --target xtensa-esp32-espidf --no-default-features --features=esp-wroom-32`
+- `make_ota_image_c3`: release build + `espflash save-image` to `firmware-c3.bin`
+- `make_ota_image_wroom32`: Xtensa release build + `espflash save-image` to `firmware-wroom32.bin`
+
+### Manual Build Examples
+
+```bash
+# ESP32-C3 (default)
 cargo build -r
+
+# ESP-WROOM-32
+MCU=esp32 cargo +esp build -r --target xtensa-esp32-espidf --no-default-features --features esp-wroom-32
 ```
 
-Flash it on the chip!
+### Manual Flash Examples
 
-```lang=bash
+```bash
+# ESP32-C3
 cargo run -r
+
+# ESP-WROOM-32
+MCU=esp32 cargo +esp run -r --target xtensa-esp32-espidf --no-default-features --features esp-wroom-32
 ```
 
-Occasionally, we run these _spells_ to keep our tools up to date.
+### Manual Lint Examples
 
-```lang=bash
+```bash
+# ESP32-C3 (default feature set)
+cargo clippy
+
+# ESP-WROOM-32 feature set
+MCU=esp32 cargo +esp clippy --target xtensa-esp32-espidf --no-default-features --features esp-wroom-32
+```
+
+Tooling updates (optional):
+
+```bash
 rustup update
 espup update
 cargo install-update -a
 ```
-
-## Support for ESP32 and ESP32-C3
-
-By default, the source code and configs are made for supporting ESP32.
-Support for ESP32-C3 is easy to do with 3 changes.
-
-- in `.cargo/config.toml` change the target `xtensa-esp32-espidf` to `riscv32imc-esp-espidf` i.e. comment out the first one and remove the comment mark from the other
-- in `rust-toolchain.toml` comment out the `channel="esp"` line and remove the comment chars on two lines below the "for ESP32-C3" comment lines.
-- optionally in `Cargo.toml` change `default = ["esp32s"]` to `default = ["esp32c3"]` in the `[feature]` section.
-
-## Support for other ESP32 boards?
-
-It should be easy to support almost any ESP32 versions with WiFi.
-Just check the pin assignments inside `src/bin/esp32temp.rs` starting after line 80 (at the time of writing).
-There we have an assignment to Boxed array `onew_pins` that will hold the pins we are probing for sensors.
-Those assignments are behind _feature gates_ aka conditional compilation and we can easily add more of them
-to support new hardware variants.
-
-Just add more _features_ into `Cargo.toml` and assign the usable gpio pins accordingly and there you go.
 
 ## Internals
 
@@ -87,14 +112,14 @@ The main task stack is set to 20 KB (`sdkconfig.defaults`) to accommodate Tokio.
 The entry point (`src/bin/esp32temp.rs`) launches six concurrent tasks via `tokio::select!`,
 meaning all tasks run cooperatively and the firmware reboots if any of them exits:
 
-| Task | Source | Purpose |
-|------|--------|---------|
-| `poll_sensors` | `measure.rs` | Reads DS18B20 sensors at a configurable interval (default 60 s) |
-| `run_api_server` | `apiserver.rs` | Axum HTTP server on port 80 (web UI + REST API) |
-| `run_mqtt` | `mqtt.rs` | Publishes temperature data to an MQTT broker (optional) |
-| `wifi_loop` | `wifi.rs` | Manages WiFi connection, reconnects on drop |
-| `pinger` | `esp32temp.rs` | Pings the gateway every 5 minutes, reboots on failure |
-| `poll_reset` | `esp32temp.rs` | Tracks uptime, monitors GPIO9 button for factory reset |
+| Task             | Source         | Purpose                                                           |
+|------------------|----------------|-------------------------------------------------------------------|
+| `poll_sensors`   | `measure.rs`   | Reads DS18B20 sensors at a configurable interval (default 60 s)   |
+| `run_api_server` | `apiserver.rs` | Axum HTTP server on port 80 (web UI + REST API)                   |
+| `run_mqtt`       | `mqtt.rs`      | Publishes temperature data to an MQTT broker (optional)           |
+| `wifi_loop`      | `wifi.rs`      | Manages WiFi connection, reconnects on drop                       |
+| `pinger`         | `esp32temp.rs` | Pings the gateway every 5 minutes, reboots on failure             |
+| `poll_reset`     | `esp32temp.rs` | Tracks uptime, monitors target-specific factory-reset button GPIO |
 
 ### Startup Sequence
 
@@ -137,15 +162,18 @@ embedded-hal 1.0.
 The Axum web server (`apiserver.rs`) provides:
 
 - `GET /` — HTML dashboard rendered from an Askama template (`templates/index.html.ask`),
-  with embedded JavaScript (`src/form.js`) for auto-refreshing temperature and uptime data
-- `GET /temp` — JSON array of current sensor readings (filters out invalid values)
+  with embedded JavaScript (`src/form.js`) and stylesheet (`src/index.css`)
+- `GET /favicon.ico` — embedded favicon
+- `GET /form.js` — embedded JavaScript for UI polling/form submissions
+- `GET /index.css` — embedded stylesheet for the web UI
+- `GET /temp` — JSON object with current sensor readings and metadata (invalid values filtered out)
 - `GET /uptime` — JSON uptime in seconds and human-readable string
 - `GET /config` / `POST /config` — read or update device configuration (POST triggers reboot)
 - `GET /reset_config` — restore factory defaults and reboot
 - `POST /fw` — OTA firmware update: provide an HTTP URL to a firmware binary,
   which is streamed directly into the inactive OTA partition and activated on reboot
 
-Static assets (favicon, JavaScript) are embedded in the binary via `include_bytes!`.
+Static assets (favicon, JavaScript, CSS) are embedded in the binary via `include_bytes!`.
 
 ### MQTT Publishing
 
@@ -173,5 +201,6 @@ and the device reboots into it. If the new firmware fails, the previous slot rem
 
 ### Factory Reset
 
-Holding the button on GPIO9 for approximately 5 seconds (9 half-second countdown ticks)
+Holding the factory-reset button for approximately 5 seconds (9 half-second countdown ticks)
 triggers a factory reset: default config is written to NVS and the device reboots.
+The reset GPIO is `GPIO9` for `esp32-c3` builds and `GPIO0` for `esp-wroom-32` builds.

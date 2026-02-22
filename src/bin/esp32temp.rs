@@ -87,10 +87,14 @@ fn main() -> anyhow::Result<()> {
 
     let peripherals = Peripherals::take().unwrap();
     let pins = peripherals.pins;
+    #[cfg(feature = "esp32-c3")]
     let button = gpio::PinDriver::input(pins.gpio9.downgrade_input())?;
 
-    #[cfg(feature = "esp32c3")]
-    let onew_pins = Box::new([
+    #[cfg(feature = "esp-wroom-32")]
+    let button = gpio::PinDriver::input(pins.gpio0.downgrade_input())?;
+
+    #[cfg(feature = "esp32-c3")]
+    let hw_onewire_pins = Box::new([
         (pins.gpio0.downgrade(), "gpio0"),
         (pins.gpio1.downgrade(), "gpio1"),
         (pins.gpio2.downgrade(), "gpio2"),
@@ -103,8 +107,8 @@ fn main() -> anyhow::Result<()> {
         (pins.gpio10.downgrade(), "gpio10"),
     ]);
 
-    #[cfg(feature = "esp32s")]
-    let onew_pins = Box::new([
+    #[cfg(feature = "esp-wroom-32")]
+    let hw_onewire_pins = Box::new([
         (pins.gpio4.downgrade(), "gpio4"),
         (pins.gpio18.downgrade(), "gpio18"),
         (pins.gpio19.downgrade(), "gpio19"),
@@ -120,8 +124,8 @@ fn main() -> anyhow::Result<()> {
 
     info!("Scanning 1-wire devices...");
     let mut n_sensors = 0;
-    let mut onewire_pins = Vec::with_capacity(onew_pins.len());
-    for (i, (mut pin, name)) in onew_pins.into_iter().enumerate() {
+    let mut onewire_pins = Vec::with_capacity(hw_onewire_pins.len());
+    for (i, (mut pin, name)) in hw_onewire_pins.into_iter().enumerate() {
         let mut pin_drv = gpio::PinDriver::input_output_od(&mut pin).unwrap();
         pin_drv.set_pull(Pull::Up).unwrap();
         let mut w = OneWire::new(pin_drv).unwrap();

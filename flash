@@ -1,3 +1,0 @@
-#!/bin/sh
-cargo run -r -- --baud 921600
-# EOF

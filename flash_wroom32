@@ -1,0 +1,5 @@
+#!/bin/sh
+set -e
+set -x
+MCU=esp32 cargo +esp run -r --target xtensa-esp32-espidf --no-default-features --features=esp-wroom-32
+# EOF

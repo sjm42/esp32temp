@@ -5,8 +5,8 @@ pub use std::{
     net,
     pin::Pin,
     sync::{
-        atomic::{AtomicU32, Ordering},
         Arc,
+        atomic::{AtomicU32, Ordering},
     },
 };
 
@@ -22,7 +22,7 @@ pub use esp_idf_hal::{
 pub use serde::{Deserialize, Serialize};
 pub use tokio::{
     sync::RwLock,
-    time::{sleep, Duration},
+    time::{Duration, sleep},
 };
 pub use tracing::*;
 

@@ -11,18 +11,27 @@ ESP32 temperature monitoring firmware in Rust. Reads DS18B20 OneWire sensors and
 ```bash
 cargo build -r          # Build release firmware
 cargo run -r            # Build, flash, and open serial monitor
-./makeimage             # Create firmware.bin for OTA updates
-./flash                 # Helper script to flash firmware
+./flash_c3              # Build+flash+monitor for ESP32-C3 (default)
+./flash_wroom32         # Build+flash+monitor for ESP-WROOM-32 (Xtensa toolchain)
+./make_ota_image_c3     # Create firmware-c3.bin for OTA updates
+./make_ota_image_wroom32 # Create firmware-wroom32.bin for OTA updates
+./makeimage             # Legacy wrapper: copies firmware-c3.bin -> firmware.bin
+./flash                 # Legacy wrapper: aliases ./flash_c3
 ```
 
 There is no test suite — testing is done manually on hardware.
 
-## Architecture Switching (ESP32 vs ESP32-C3)
+## Hardware Target Selection (ESP32-C3 vs ESP-WROOM-32)
 
-Three files must be changed together:
-1. `.cargo/config.toml` — switch target between `xtensa-esp32-espidf` and `riscv32imc-esp-espidf`, also set `MCU` env var
-2. `rust-toolchain.toml` — switch channel between `esp` (ESP32) and `nightly` (ESP32-C3)
-3. `Cargo.toml` — switch default feature between `esp32s` and `esp32c3`
+Preferred approach: use the target-specific scripts instead of editing files.
+
+- `esp32-c3` (default feature): `cargo run -r` / `./flash_c3`
+- `esp-wroom-32`: `MCU=esp32 cargo +esp run -r --target xtensa-esp32-espidf --no-default-features --features=esp-wroom-32`
+
+If manually changing defaults, keep these aligned:
+1. `.cargo/config.toml` — target (`riscv32imc-esp-espidf` vs `xtensa-esp32-espidf`) and `MCU`
+2. `rust-toolchain.toml` — `nightly` (C3) vs `esp` (Xtensa ESP32)
+3. `Cargo.toml` — default feature (`esp32-c3` vs `esp-wroom-32`)
 
 ## Architecture
 
@@ -33,7 +42,7 @@ Single async binary (`src/bin/esp32temp.rs`) using Tokio single-threaded runtime
 - **run_mqtt** (`mqtt.rs`) — optional MQTT publisher for sensor data
 - **wifi_loop** (`wifi.rs`) — WiFi connection manager with auto-reconnect, supports WPA2 Personal/Enterprise
 - **pinger** — network connectivity monitor, reboots on prolonged failure
-- **poll_reset** — GPIO9 button handler for factory reset (hold 10s)
+- **poll_reset** — target-specific button handler for factory reset (GPIO9 on C3, GPIO0 on WROOM32)
 
 Shared state: `Arc<Pin<Box<MyState>>>` with `RwLock` fields (`state.rs`).
 
@@ -41,7 +50,7 @@ Configuration (`config.rs`): persisted in NVS using `postcard` serialization wit
 
 ## Key API Endpoints
 
-`GET /temp` — JSON temperature readings, `GET /config` and `POST /config` — configuration, `POST /fw` — OTA firmware update from URL, `GET /reset_config` — factory reset.
+`GET /temp` — JSON temperature readings, `GET /config` and `POST /config` — configuration, `POST /fw` — OTA firmware update from URL, `GET /reset_config` — factory reset. UI static assets are served at `GET /form.js`, `GET /index.css`, and `GET /favicon.ico`.
 
 ## Pin Configuration
 
