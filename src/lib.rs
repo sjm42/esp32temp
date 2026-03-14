@@ -17,7 +17,7 @@ pub use chrono::*;
 pub use esp_idf_hal::{
     delay::{Ets, FreeRtos},
     gpio::{self, *},
-    prelude::*,
+    peripherals::Peripherals,
 };
 pub use serde::{Deserialize, Serialize};
 pub use tokio::{

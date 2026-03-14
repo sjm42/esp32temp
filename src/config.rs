@@ -71,7 +71,7 @@ impl MyConfig {
     pub fn from_nvs(nvs: &mut nvs::EspNvs<nvs::NvsDefault>) -> Option<Self> {
         let mut nvsbuf = [0u8; NVS_BUF_SIZE];
         info!("Reading up to {sz} bytes from nvs...", sz = NVS_BUF_SIZE);
-        let b = match nvs.get_raw(CONFIG_NAME, &mut nvsbuf) {
+        let b = match nvs.get_blob(CONFIG_NAME, &mut nvsbuf) {
             Err(e) => {
                 error!("Nvs read error {e:?}");
                 return None;
@@ -114,7 +114,7 @@ impl MyConfig {
             sz = nvsdata.len()
         );
 
-        match nvs.set_raw(CONFIG_NAME, nvsdata) {
+        match nvs.set_blob(CONFIG_NAME, nvsdata) {
             Ok(_) => {
                 info!("Config saved.");
                 Ok(())

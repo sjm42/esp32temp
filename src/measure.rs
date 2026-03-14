@@ -158,8 +158,8 @@ pub async fn poll_sensors(state: Arc<Pin<Box<MyState>>>) -> anyhow::Result<()> {
             let mut onewires = state.sensors.write().await;
             let mut i = 0;
             for onew in onewires.iter_mut() {
-                let mut pin_drv = gpio::PinDriver::input_output_od(&mut onew.pin).unwrap();
-                pin_drv.set_pull(Pull::Up).unwrap();
+                let pin = unsafe { onew.pin.reborrow() };
+                let pin_drv = gpio::PinDriver::input_output_od(pin, Pull::Up).unwrap();
                 let mut w = OneWire::new(pin_drv).unwrap();
                 match Box::pin(measure_temperatures(&mut w, &onew.ids, max_retry)).await {
                     Ok(meas) => {

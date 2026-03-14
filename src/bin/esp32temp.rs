@@ -13,11 +13,6 @@ use esp32temp::*;
 
 const CONFIG_RESET_COUNT: i32 = 9;
 
-// DANGER! DO NOT USE THIS until esp-idf-svc supports newer versions of ESP-IDF
-// - until then, only up to esp-idf 5.3.2 is supported with esp_app_desc!()
-// Without the macro usage up to esp-idf v5.4.2 is supported.
-// ESP-IDF version 5.5 requires updated esp-idf-svc crate to be released.
-
 // use esp_idf_sys::esp_app_desc;
 // esp_app_desc!();
 
@@ -88,46 +83,46 @@ fn main() -> anyhow::Result<()> {
     let peripherals = Peripherals::take().unwrap();
     let pins = peripherals.pins;
     #[cfg(feature = "esp32-c3")]
-    let button = gpio::PinDriver::input(pins.gpio9.downgrade_input())?;
+    let button = gpio::PinDriver::input(pins.gpio9.degrade_input(), Pull::Up)?;
 
     #[cfg(feature = "esp-wroom-32")]
-    let button = gpio::PinDriver::input(pins.gpio0.downgrade_input())?;
+    let button = gpio::PinDriver::input(pins.gpio0.degrade_input(), Pull::Up)?;
 
     #[cfg(feature = "esp32-c3")]
     let hw_onewire_pins = Box::new([
-        (pins.gpio0.downgrade(), "gpio0"),
-        (pins.gpio1.downgrade(), "gpio1"),
-        (pins.gpio2.downgrade(), "gpio2"),
-        (pins.gpio3.downgrade(), "gpio3"),
-        (pins.gpio4.downgrade(), "gpio4"),
-        (pins.gpio5.downgrade(), "gpio5"),
-        (pins.gpio6.downgrade(), "gpio6"),
-        (pins.gpio7.downgrade(), "gpio7"),
-        (pins.gpio8.downgrade(), "gpio8"),
-        (pins.gpio10.downgrade(), "gpio10"),
+        (pins.gpio0.degrade_input_output(), "gpio0"),
+        (pins.gpio1.degrade_input_output(), "gpio1"),
+        (pins.gpio2.degrade_input_output(), "gpio2"),
+        (pins.gpio3.degrade_input_output(), "gpio3"),
+        (pins.gpio4.degrade_input_output(), "gpio4"),
+        (pins.gpio5.degrade_input_output(), "gpio5"),
+        (pins.gpio6.degrade_input_output(), "gpio6"),
+        (pins.gpio7.degrade_input_output(), "gpio7"),
+        (pins.gpio8.degrade_input_output(), "gpio8"),
+        (pins.gpio10.degrade_input_output(), "gpio10"),
     ]);
 
     #[cfg(feature = "esp-wroom-32")]
     let hw_onewire_pins = Box::new([
-        (pins.gpio4.downgrade(), "gpio4"),
-        (pins.gpio18.downgrade(), "gpio18"),
-        (pins.gpio19.downgrade(), "gpio19"),
-        (pins.gpio21.downgrade(), "gpio21"),
-        (pins.gpio22.downgrade(), "gpio22"),
-        (pins.gpio23.downgrade(), "gpio23"),
-        (pins.gpio25.downgrade(), "gpio25"),
-        (pins.gpio26.downgrade(), "gpio26"),
-        (pins.gpio27.downgrade(), "gpio27"),
-        (pins.gpio32.downgrade(), "gpio32"),
-        (pins.gpio33.downgrade(), "gpio33"),
+        (pins.gpio4.degrade_input_output(), "gpio4"),
+        (pins.gpio18.degrade_input_output(), "gpio18"),
+        (pins.gpio19.degrade_input_output(), "gpio19"),
+        (pins.gpio21.degrade_input_output(), "gpio21"),
+        (pins.gpio22.degrade_input_output(), "gpio22"),
+        (pins.gpio23.degrade_input_output(), "gpio23"),
+        (pins.gpio25.degrade_input_output(), "gpio25"),
+        (pins.gpio26.degrade_input_output(), "gpio26"),
+        (pins.gpio27.degrade_input_output(), "gpio27"),
+        (pins.gpio32.degrade_input_output(), "gpio32"),
+        (pins.gpio33.degrade_input_output(), "gpio33"),
     ]);
 
     info!("Scanning 1-wire devices...");
     let mut n_sensors = 0;
     let mut onewire_pins = Vec::with_capacity(hw_onewire_pins.len());
     for (i, (mut pin, name)) in hw_onewire_pins.into_iter().enumerate() {
-        let mut pin_drv = gpio::PinDriver::input_output_od(&mut pin).unwrap();
-        pin_drv.set_pull(Pull::Up).unwrap();
+        let pin_drv =
+            gpio::PinDriver::input_output_od(unsafe { pin.reborrow() }, Pull::Up).unwrap();
         let mut w = OneWire::new(pin_drv).unwrap();
         if let Ok(devs) = scan_1wire(&mut w) {
             drop(w);
@@ -188,7 +183,7 @@ fn main() -> anyhow::Result<()> {
 
 async fn poll_reset(
     mut state: Arc<Pin<Box<MyState>>>,
-    button: PinDriver<'_, AnyInputPin, Input>,
+    button: PinDriver<'static, Input>,
 ) -> anyhow::Result<()> {
     // wait for NTP
     loop {
@@ -219,7 +214,7 @@ async fn poll_reset(
 
 async fn reset_button<'a>(
     state: &mut Arc<std::pin::Pin<Box<MyState>>>,
-    button: &PinDriver<'a, AnyInputPin, Input>,
+    button: &PinDriver<'a, Input>,
 ) -> anyhow::Result<()> {
     let mut reset_cnt = CONFIG_RESET_COUNT;
 

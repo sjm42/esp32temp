@@ -6,7 +6,7 @@ use one_wire_bus::Address;
 use crate::*;
 
 pub struct MyOnewire {
-    pub pin: AnyIOPin,
+    pub pin: AnyIOPin<'static>,
     pub name: String,
     pub ids: Vec<Address>,
 }
