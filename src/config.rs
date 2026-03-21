@@ -6,8 +6,7 @@ use esp_idf_svc::nvs;
 use crate::*;
 
 pub const NVS_BUF_SIZE: usize = 256;
-
-const DEFAULT_API_PORT: u16 = 80;
+pub const HTTP_API_PORT: u16 = 80;
 const DEFAULT_SENSOR_RETRIES: u32 = 5;
 const DEFAULT_POLL_DELAY: u64 = 60;
 
@@ -16,7 +15,6 @@ const CONFIG_NAME: &str = "cfg";
 #[derive(Clone, Debug, Serialize, Deserialize, Template)]
 #[template(path = "index.html.ask", escape = "html")]
 pub struct MyConfig {
-    pub port: u16,
     pub retries: u32,
     pub delay: u64,
 
@@ -32,6 +30,7 @@ pub struct MyConfig {
     pub dns1: net::Ipv4Addr,
     pub dns2: net::Ipv4Addr,
 
+    pub esphome_enable: bool,
     pub mqtt_enable: bool,
     pub mqtt_url: String,
     pub mqtt_topic: String,
@@ -40,11 +39,6 @@ pub struct MyConfig {
 impl Default for MyConfig {
     fn default() -> Self {
         Self {
-            port: option_env!("API_PORT")
-                .unwrap_or("-")
-                .parse()
-                .unwrap_or(DEFAULT_API_PORT),
-
             wifi_ssid: option_env!("WIFI_SSID").unwrap_or("internet").into(),
             wifi_pass: option_env!("WIFI_PASS").unwrap_or("password").into(),
             wifi_wpa2ent: false,
@@ -57,6 +51,7 @@ impl Default for MyConfig {
             dns1: net::Ipv4Addr::new(0, 0, 0, 0),
             dns2: net::Ipv4Addr::new(0, 0, 0, 0),
 
+            esphome_enable: false,
             mqtt_enable: false,
             mqtt_url: "mqtt://mqtt.local:1883".into(),
             mqtt_topic: "esp32temp".into(),

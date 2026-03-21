@@ -49,6 +49,10 @@ impl<'a> WifiLoop<'a> {
             "esp32temp-{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}",
             mac[0], mac[1], mac[2], mac[3], mac[4], mac[5],
         );
+        *self.state.my_mac_s.write().await = format!(
+            "{:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
+            mac[0], mac[1], mac[2], mac[3], mac[4], mac[5],
+        );
 
         let espwifi = EspWifi::wrap_all(wifidriver, net_if, EspNetif::new(netif::NetifStack::Ap)?)?;
         self.wifi = Some(AsyncWifi::wrap(espwifi, sysloop, timer.clone())?);

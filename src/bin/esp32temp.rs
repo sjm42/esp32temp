@@ -170,6 +170,7 @@ fn main() -> anyhow::Result<()> {
                 _ = Box::pin(poll_sensors(shared_state.clone())) => { error!("poll_sensors() ended."); }
                 _ = Box::pin(run_mqtt(shared_state.clone())) => { error!("run_mqtt() ended."); }
                 _ = Box::pin(run_api_server(shared_state.clone())) => { error!("run_api_server() ended."); }
+                _ = Box::pin(run_esphome_api(shared_state.clone())) => { error!("run_esphome_api() ended."); }
                 _ = Box::pin(wifi_loop.run(wifidriver, sysloop, timer)) => { error!("wifi_loop.run() ended."); }
                 _ = Box::pin(pinger(shared_state.clone())) => { error!("pinger() ended."); }
             };

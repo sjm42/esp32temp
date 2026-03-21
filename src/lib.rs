@@ -2,6 +2,7 @@
 #![warn(clippy::large_futures)]
 
 pub use std::{
+    any::Any,
     net,
     pin::Pin,
     sync::{
@@ -22,7 +23,7 @@ pub use esp_idf_hal::{
 pub use serde::{Deserialize, Serialize};
 pub use tokio::{
     sync::RwLock,
-    time::{Duration, sleep},
+    time::{Duration, sleep, timeout},
 };
 pub use tracing::*;
 
@@ -40,6 +41,9 @@ pub use mqtt::*;
 
 mod apiserver;
 pub use apiserver::*;
+
+mod esphome_api;
+pub use esphome_api::*;
 
 mod wifi;
 pub use wifi::*;

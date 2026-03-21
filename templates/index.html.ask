@@ -21,7 +21,6 @@
 <section class="panel">
 <h2>Settings</h2>
 {% let myform = [
-    ("text", "port", port.to_string(), "Port (1-65535)"),
     ("text", "wifi_ssid", wifi_ssid.to_string(), "WiFi SSID"),
     ("checkbox", "wifi_wpa2ent", wifi_wpa2ent.to_string(), "WPA2 Enterprise"),
     ("text", "wifi_username", wifi_username.to_string(), "WiFi username"),
@@ -32,6 +31,7 @@
     ("text", "v4gw", v4gw.to_string(), "IPv4 gateway"),
     ("text", "dns1", dns1.to_string(), "DNS 1"),
     ("text", "dns2", dns2.to_string(), "DNS 2"),
+    ("checkbox", "esphome_enable", esphome_enable.to_string(), "ESPHome API enabled"),
     ("checkbox", "mqtt_enable", mqtt_enable.to_string(), "MQTT enabled"),
     ("text", "mqtt_url", mqtt_url.to_string(), "MQTT URL"),
     ("text", "mqtt_topic", mqtt_topic.to_string(), "MQTT topic"),

@@ -131,7 +131,7 @@ embedded-hal 1.0.
 The Axum web server (`apiserver.rs`) provides:
 
 - `GET /` — HTML dashboard rendered from an Askama template (`templates/index.html.ask`),
-  with embedded JavaScript (`src/form.js`) and stylesheet (`src/index.css`)
+  with embedded JavaScript (`static/form.js`) and stylesheet (`static/index.css`)
 - `GET /favicon.ico` — embedded favicon
 - `GET /form.js` — embedded JavaScript for UI polling/form submissions
 - `GET /index.css` — embedded stylesheet for the web UI

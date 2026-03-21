@@ -3,7 +3,7 @@
 ## Project Structure & Module Organization
 `src/bin/esp32temp.rs` is the firmware entrypoint. Shared logic lives in `src/` modules such as `wifi.rs`, `mqtt.rs`, `apiserver.rs`, `measure.rs`, `state.rs`, and `config.rs`, with `src/lib.rs` wiring exports.
 
-UI assets are embedded into the firmware: `templates/index.html.ask` (Askama template), `src/form.js`, and `src/favicon.ico`. Build/runtime configuration files are at the repo root (`sdkconfig.defaults`, `partitions.csv`, `rust-toolchain.toml`). Helper scripts `flash` and `makeimage` wrap common release tasks.
+UI assets are embedded into the firmware: `templates/index.html.ask` (Askama template) and the files in `static/` (`form.js`, `index.css`, `favicon.ico`). Build/runtime configuration files are at the repo root (`sdkconfig.defaults`, `partitions.csv`, `rust-toolchain.toml`). Helper scripts `flash` and `makeimage` wrap common release tasks.
 
 ## Build, Test, and Development Commands
 - `cargo check` — fast validation of Rust code without producing a firmware binary.

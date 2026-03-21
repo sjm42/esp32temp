@@ -133,6 +133,17 @@ const handleFwSubmit = async (event) => {
     event.preventDefault();
     const form = event.currentTarget;
     const url = form.action;
+    const firmwareUrl = String(new FormData(form).get("url") || "").trim();
+
+    try {
+        const parsed = new URL(firmwareUrl);
+        if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+            throw new Error("Firmware URL must start with http:// or https://");
+        }
+    } catch (_error) {
+        setFormStatus(form, "error", "Firmware URL must start with http:// or https://");
+        return;
+    }
 
     if (!window.confirm("Start firmware update now? The device will reboot if the update succeeds.")) {
         return;
@@ -154,12 +165,12 @@ const handleFwSubmit = async (event) => {
 
 const postCfgDataAsJson = async ({url, formData}) => {
     const formObj = Object.fromEntries(formData.entries());
-    formObj.port = parseInt(formObj.port, 10);
     formObj.v4mask = parseInt(formObj.v4mask, 10);
     formObj.retries = parseInt(formObj.retries, 10);
     formObj.delay = parseInt(formObj.delay, 10);
     formObj.wifi_wpa2ent = (formObj.wifi_wpa2ent === "on");
     formObj.v4dhcp = (formObj.v4dhcp === "on");
+    formObj.esphome_enable = (formObj.esphome_enable === "on");
     formObj.mqtt_enable = (formObj.mqtt_enable === "on");
 
     return fetchPayloadOrError(url, {

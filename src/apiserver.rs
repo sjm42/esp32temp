@@ -1,20 +1,59 @@
 // apiserver.rs
 
 use axum::{
-    Json, Router,
-    body::Body,
-    extract::{Form, State},
-    http::{Response, StatusCode, header},
+    body::Body, extract::{Form, State},
+    http::{header, Response, StatusCode},
     response::{Html, IntoResponse},
     routing::*,
+    Json,
+    Router,
 };
 pub use axum_macros::debug_handler;
-// use tower_http::trace::TraceLayer;
 use embedded_svc::http::client::Client as HttpClient;
-use esp_idf_svc::{http::client::EspHttpConnection, io, ota::EspOta};
-use std::any::Any;
+use esp_idf_svc::{
+    http::client::{Configuration as HttpConfiguration, EspHttpConnection},
+    io,
+    ota::EspOta,
+};
 
 use crate::*;
+
+macro_rules! static_handler {
+    ($fn_name:ident, $path:literal, $content_type:literal, $bytes:expr) => {
+        async fn $fn_name(State(state): State<Arc<Pin<Box<MyState>>>>) -> Response<Body> {
+            let cnt = state.api_cnt.fetch_add(1, Ordering::Relaxed);
+            info!("#{cnt} {}", $path);
+
+            (
+                StatusCode::OK,
+                [
+                    (header::CONTENT_TYPE, $content_type),
+                    (header::CONTENT_ENCODING, "gzip"),
+                ],
+                $bytes.to_vec(),
+            )
+                .into_response()
+        }
+    };
+}
+static_handler!(
+    get_favicon,
+    "/favicon.ico",
+    "image/vnd.microsoft.icon",
+    include_bytes!(concat!(env!("OUT_DIR"), "/favicon.ico.gz"))
+);
+static_handler!(
+    get_formjs,
+    "/form.js",
+    "text/javascript",
+    include_bytes!(concat!(env!("OUT_DIR"), "/form.js.gz"))
+);
+static_handler!(
+    get_indexcss,
+    "/index.css",
+    "text/css; charset=utf-8",
+    include_bytes!(concat!(env!("OUT_DIR"), "/index.css.gz"))
+);
 
 pub async fn run_api_server(state: Arc<Pin<Box<MyState>>>) -> anyhow::Result<()> {
     loop {
@@ -24,7 +63,7 @@ pub async fn run_api_server(state: Arc<Pin<Box<MyState>>>) -> anyhow::Result<()>
         sleep(Duration::from_secs(1)).await;
     }
 
-    let listen = format!("0.0.0.0:{}", state.config.port);
+    let listen = format!("0.0.0.0:{}", HTTP_API_PORT);
     let addr = listen.parse::<net::SocketAddr>()?;
 
     let app = Router::new()
@@ -77,45 +116,6 @@ pub async fn get_index(State(state): State<Arc<Pin<Box<MyState>>>>) -> Response<
         Ok(s) => s,
     };
     (StatusCode::OK, Html(index)).into_response()
-}
-
-pub async fn get_favicon(State(state): State<Arc<Pin<Box<MyState>>>>) -> Response<Body> {
-    let cnt = state.api_cnt.fetch_add(1, Ordering::Relaxed);
-    info!("#{cnt} get_favicon()");
-
-    let favicon = include_bytes!("favicon.ico");
-    (
-        StatusCode::OK,
-        [(header::CONTENT_TYPE, "image/vnd.microsoft.icon")],
-        favicon.to_vec(),
-    )
-        .into_response()
-}
-
-pub async fn get_formjs(State(state): State<Arc<Pin<Box<MyState>>>>) -> Response<Body> {
-    let cnt = state.api_cnt.fetch_add(1, Ordering::Relaxed);
-    info!("#{cnt} get_formjs()");
-
-    let formjs = include_bytes!("form.js");
-    (
-        StatusCode::OK,
-        [(header::CONTENT_TYPE, "text/javascript")],
-        formjs.to_vec(),
-    )
-        .into_response()
-}
-
-pub async fn get_indexcss(State(state): State<Arc<Pin<Box<MyState>>>>) -> Response<Body> {
-    let cnt = state.api_cnt.fetch_add(1, Ordering::Relaxed);
-    info!("#{cnt} get_indexcss()");
-
-    let indexcss = include_bytes!("index.css");
-    (
-        StatusCode::OK,
-        [(header::CONTENT_TYPE, "text/css; charset=utf-8")],
-        indexcss.to_vec(),
-    )
-        .into_response()
 }
 
 pub async fn get_uptime(State(state): State<Arc<Pin<Box<MyState>>>>) -> (StatusCode, Json<Uptime>) {
@@ -221,13 +221,17 @@ async fn update_fw(
     info!("#{cnt} update_fw()");
 
     info!("Firmware update: \n{fw_update:#?}");
-    if !fw_update.url.starts_with("http://") {
+    if !fw_update.url.starts_with("http://") && !fw_update.url.starts_with("https://") {
         return StatusCode::BAD_REQUEST.into_response();
     }
 
-    let mut ota = EspOta::new().unwrap();
-    let mut client = HttpClient::wrap(EspHttpConnection::new(&Default::default()).unwrap());
+    let client_config = HttpConfiguration {
+        crt_bundle_attach: Some(esp_idf_svc::sys::esp_crt_bundle_attach),
+        ..Default::default()
+    };
 
+    let mut ota = EspOta::new().unwrap();
+    let mut client = HttpClient::wrap(EspHttpConnection::new(&client_config).unwrap());
     let req = client.get(fw_update.url.as_str()).unwrap();
     let resp = req.submit().unwrap();
     if resp.status() != StatusCode::OK {
