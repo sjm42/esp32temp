@@ -120,7 +120,14 @@ impl<'a> WifiLoop<'a> {
         wifi.set_configuration(&Configuration::Client(client_cfg))?;
 
         info!("WiFi driver starting...");
-        Ok(Box::pin(wifi.start()).await?)
+        Box::pin(wifi.start()).await?;
+
+        info!("WiFi disabling modem power save...");
+        esp_idf_sys::esp!(unsafe {
+            esp_idf_sys::esp_wifi_set_ps(esp_idf_sys::wifi_ps_type_t_WIFI_PS_NONE)
+        })?;
+
+        Ok(())
     }
 
     pub async fn initial_connect(&mut self) -> anyhow::Result<()> {
