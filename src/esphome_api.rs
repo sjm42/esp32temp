@@ -111,6 +111,13 @@ enum EntityStateValue {
 }
 
 pub async fn run_esphome_api(state: Arc<Pin<Box<MyState>>>) -> anyhow::Result<()> {
+    if state.ap_mode {
+        info!("ESPHome API is disabled in AP mode.");
+        loop {
+            sleep(Duration::from_secs(3600)).await;
+        }
+    }
+
     if !state.config.esphome_enable {
         info!("ESPHome API is disabled.");
         loop {
@@ -400,7 +407,10 @@ async fn build_entity_defs(state: &Arc<Pin<Box<MyState>>>) -> Vec<EntityDef> {
 
     for onewire in sensors.iter() {
         for address in onewire.ids.iter() {
-            let address_hex = format!("{:016X}", address.0);
+            let address_hex = format!(
+                "{:016X}",
+                u64::from_be_bytes(address.address().to_le_bytes())
+            );
             let object_id = format!("temperature_{}", address_hex.to_ascii_lowercase());
             entities.push(EntityDef {
                 source: EntitySource::Temperature {

@@ -72,6 +72,9 @@ espup update
 cargo install-update -a
 ```
 
+The ESP-IDF component manager lockfile for the RMT-backed 1-Wire bus is committed as
+`components_esp32c3.lock`.
+
 ## Internals
 
 ### Runtime Architecture
@@ -121,10 +124,12 @@ Default WiFi credentials can be injected at build time via environment variables
 ### Temperature Measurement
 
 Each configured GPIO pin is scanned for DS18B20 devices on its OneWire bus at startup.
-During polling (`measure.rs`), sensors are read at 12-bit resolution with configurable retries
-(default 5) to handle CRC errors that occur occasionally on the bus. The `ds18b20` and
-`one-wire-bus` crates are custom forks that fix negative temperature handling and use
-embedded-hal 1.0.
+The current implementation uses Espressif's `onewire_bus` ESP-IDF component with a small
+local wrapper in `src/rmt_ow.rs`, so bus timing is handled by the ESP32 RMT peripheral
+instead of bit-banged software delays. During polling (`measure.rs`), sensors are read at
+12-bit resolution with configurable retries (default 5) to handle occasional read/CRC
+failures. The local wrapper exists so the native 1-Wire pull-up flag can be enabled
+explicitly.
 
 ### HTTP API
 

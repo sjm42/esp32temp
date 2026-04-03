@@ -12,7 +12,7 @@ pub use std::{
 };
 
 pub use anyhow::bail;
-use askama::Template;
+pub use askama::Template;
 pub use chrono::*;
 #[allow(ambiguous_glob_reexports)]
 pub use esp_idf_hal::{
@@ -20,6 +20,7 @@ pub use esp_idf_hal::{
     gpio::{self, *},
     peripherals::Peripherals,
 };
+pub use esp_idf_svc::{nvs, sntp, wifi::WifiDriver};
 pub use serde::{Deserialize, Serialize};
 pub use tokio::{
     sync::RwLock,
@@ -36,6 +37,9 @@ pub use state::*;
 mod measure;
 pub use measure::*;
 
+mod rmt_ow;
+pub use rmt_ow::*;
+
 mod mqtt;
 pub use mqtt::*;
 
@@ -49,6 +53,14 @@ mod wifi;
 pub use wifi::*;
 
 pub const FW_VERSION: &str = env!("CARGO_PKG_VERSION");
+pub const AP_MODE_SSID: &str = "esp32temp";
+pub const AP_MODE_IP_ADDR: net::Ipv4Addr = net::Ipv4Addr::new(10, 42, 42, 1);
+pub const AP_MODE_IP_MASK: u8 = 24;
+
+#[cfg(feature = "esp32-c3")]
+pub const LED_ACTIVE_LOW: bool = true;
+#[cfg(feature = "esp-wroom-32")]
+pub const LED_ACTIVE_LOW: bool = false;
 
 pub const NO_TEMP: f32 = -1000.0;
 

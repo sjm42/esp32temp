@@ -1,6 +1,8 @@
 // wifi.rs
 
-use embedded_svc::wifi::{AuthMethod, ClientConfiguration, Configuration};
+use embedded_svc::wifi::{
+    AccessPointConfiguration, AuthMethod, ClientConfiguration, Configuration,
+};
 use esp_idf_svc::{
     eventloop::{EspEventLoop, System},
     ipv4,
@@ -25,25 +27,28 @@ impl<'a> WifiLoop<'a> {
     ) -> anyhow::Result<()> {
         info!("Initializing Wi-Fi...");
 
-        let ipv4_config = if self.state.config.v4dhcp {
-            ipv4::ClientConfiguration::DHCP(ipv4::DHCPClientSettings::default())
+        let net_if = if self.state.ap_mode {
+            EspNetif::new_with_conf(&netif::NetifConfiguration::wifi_default_client())?
         } else {
-            ipv4::ClientConfiguration::Fixed(ipv4::ClientSettings {
-                ip: self.state.config.v4addr,
-                subnet: ipv4::Subnet {
-                    gateway: self.state.config.v4gw,
-                    mask: ipv4::Mask(self.state.config.v4mask),
-                },
-                dns: Some(self.state.config.dns1),
-                secondary_dns: Some(self.state.config.dns2),
-            })
-        };
-        // info!("IP config: {ipv4_config:?}");
+            let ipv4_config = if self.state.config.v4dhcp {
+                ipv4::ClientConfiguration::DHCP(ipv4::DHCPClientSettings::default())
+            } else {
+                ipv4::ClientConfiguration::Fixed(ipv4::ClientSettings {
+                    ip: self.state.config.v4addr,
+                    subnet: ipv4::Subnet {
+                        gateway: self.state.config.v4gw,
+                        mask: ipv4::Mask(self.state.config.v4mask),
+                    },
+                    dns: Some(self.state.config.dns1),
+                    secondary_dns: Some(self.state.config.dns2),
+                })
+            };
 
-        let net_if = EspNetif::new_with_conf(&netif::NetifConfiguration {
-            ip_configuration: Some(ipv4::Configuration::Client(ipv4_config)),
-            ..netif::NetifConfiguration::wifi_default_client()
-        })?;
+            EspNetif::new_with_conf(&netif::NetifConfiguration {
+                ip_configuration: Some(ipv4::Configuration::Client(ipv4_config)),
+                ..netif::NetifConfiguration::wifi_default_client()
+            })?
+        };
         let mac = net_if.get_mac()?;
         *self.state.myid.write().await = format!(
             "esp32temp-{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}",
@@ -54,8 +59,26 @@ impl<'a> WifiLoop<'a> {
             mac[0], mac[1], mac[2], mac[3], mac[4], mac[5],
         );
 
-        let espwifi = EspWifi::wrap_all(wifidriver, net_if, EspNetif::new(netif::NetifStack::Ap)?)?;
+        let ap_netif = EspNetif::new_with_conf(&netif::NetifConfiguration {
+            ip_configuration: Some(ipv4::Configuration::Router(ipv4::RouterConfiguration {
+                subnet: ipv4::Subnet {
+                    gateway: AP_MODE_IP_ADDR,
+                    mask: ipv4::Mask(AP_MODE_IP_MASK),
+                },
+                dhcp_enabled: true,
+                dns: Some(AP_MODE_IP_ADDR),
+                secondary_dns: None,
+            })),
+            ..netif::NetifConfiguration::wifi_default_router()
+        })?;
+
+        let espwifi = EspWifi::wrap_all(wifidriver, net_if, ap_netif)?;
         self.wifi = Some(AsyncWifi::wrap(espwifi, sysloop, timer.clone())?);
+
+        if self.state.ap_mode {
+            return Box::pin(self.run_ap_mode()).await;
+        }
+
         Box::pin(self.configure()).await?;
 
         if let Err(e) = Box::pin(self.initial_connect()).await {
@@ -75,6 +98,46 @@ impl<'a> WifiLoop<'a> {
         *self.state.wifi_up.write().await = true;
 
         Box::pin(self.stay_connected()).await
+    }
+
+    async fn run_ap_mode(&mut self) -> anyhow::Result<()> {
+        Box::pin(self.configure_ap()).await?;
+
+        let netif = self.wifi.as_ref().unwrap().wifi().ap_netif();
+        let ip_info = netif.get_ip_info()?;
+        *self.state.if_index.write().await = netif.get_index();
+        *self.state.ip_addr.write().await = ip_info.ip;
+        *self.state.ping_ip.write().await = None;
+        *self.state.wifi_up.write().await = true;
+        self.state.led_on().await?;
+
+        info!(
+            "WiFi AP mode is up at {} for manual configuration.",
+            ip_info.ip
+        );
+
+        loop {
+            sleep(Duration::from_secs(3600)).await;
+        }
+    }
+
+    async fn configure_ap(&mut self) -> anyhow::Result<()> {
+        info!("WiFi starting access point mode...");
+        let wifi = self.wifi.as_mut().unwrap();
+        let ap_cfg = AccessPointConfiguration {
+            ssid: AP_MODE_SSID.try_into().unwrap(),
+            auth_method: AuthMethod::None,
+            max_connections: 4,
+            ..Default::default()
+        };
+
+        wifi.set_configuration(&Configuration::AccessPoint(ap_cfg))?;
+
+        info!("WiFi driver starting...");
+        Box::pin(wifi.start()).await?;
+
+        info!("WiFi AP ready.");
+        Ok(())
     }
 
     pub async fn configure(&mut self) -> anyhow::Result<()> {

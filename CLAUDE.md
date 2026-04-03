@@ -11,12 +11,12 @@ ESP32 temperature monitoring firmware in Rust. Reads DS18B20 OneWire sensors and
 ```bash
 cargo build -r          # Build release firmware
 cargo run -r            # Build, flash, and open serial monitor
+cargo check             # Fast compile check
+cargo clippy --all-targets -- -D warnings
 ./flash_c3              # Build+flash+monitor for ESP32-C3 (default)
 ./flash_wroom32         # Build+flash+monitor for ESP-WROOM-32 (Xtensa toolchain)
 ./make_ota_image_c3     # Create firmware-c3.bin for OTA updates
 ./make_ota_image_wroom32 # Create firmware-wroom32.bin for OTA updates
-./makeimage             # Legacy wrapper: copies firmware-c3.bin -> firmware.bin
-./flash                 # Legacy wrapper: aliases ./flash_c3
 ```
 
 There is no test suite — testing is done manually on hardware.
@@ -37,16 +37,17 @@ If manually changing defaults, keep these aligned:
 
 Single async binary (`src/bin/esp32temp.rs`) using Tokio single-threaded runtime. Runs concurrent tasks via `tokio::select!`:
 
-- **poll_sensors** (`measure.rs`) — scans DS18B20 sensors on configured GPIO pins with retry logic
+- **poll_sensors** (`measure.rs`) — scans DS18B20 sensors on configured GPIO pins with retry logic using the ESP-IDF `onewire_bus` RMT backend
 - **run_api_server** (`apiserver.rs`) — Axum HTTP server on port 80 with REST API + HTML UI (Askama templates in `templates/`)
 - **run_mqtt** (`mqtt.rs`) — optional MQTT publisher for sensor data
 - **wifi_loop** (`wifi.rs`) — WiFi connection manager with auto-reconnect, supports WPA2 Personal/Enterprise
 - **pinger** — network connectivity monitor, reboots on prolonged failure
-- **poll_reset** — target-specific button handler for factory reset (GPIO9 on C3, GPIO0 on WROOM32)
+- **poll_reset** — target-specific button handler for factory reset / one-shot AP boot (GPIO9 on C3, GPIO0 on WROOM32)
 
 Shared state: `Arc<Pin<Box<MyState>>>` with `RwLock` fields (`state.rs`).
 
 Configuration (`config.rs`): persisted in NVS using `postcard` serialization with CRC-32 checksum. Editable via web UI (POST /config triggers reboot).
+If no WiFi configuration is stored, the device boots into AP mode for initial setup.
 
 ## Key API Endpoints
 
@@ -54,12 +55,13 @@ Configuration (`config.rs`): persisted in NVS using `postcard` serialization wit
 
 ## Pin Configuration
 
-GPIO pin assignments are feature-gated in `src/bin/esp32temp.rs` (~line 80). Each chip variant has its own set of usable pins defined in the `onew_pins` array.
+GPIO pin assignments are feature-gated in `src/bin/esp32temp.rs`. Each chip variant has its own candidate 1-Wire GPIO list there. The ESP32-C3 onboard LED pin is intentionally excluded from sensor scanning.
 
 ## Dependencies of Note
 
-- `ds18b20` and `one-wire-bus` are **custom forks** (github.com/sjm42/) fixing negative temperature handling and migrated to embedded-hal 1.0
-- ESP-IDF version pinned to v5.4.3 in `.cargo/config.toml`
+- Native 1-Wire support comes from Espressif's `onewire_bus` component declared in `Cargo.toml` under `package.metadata.esp-idf-sys.extra_components`
+- `src/rmt_ow.rs` is a small local wrapper around the ESP-IDF RMT 1-Wire API that enables the native `en_pull_up` flag explicitly
+- ESP-IDF version pinned to `v5.5.4` in `.cargo/config.toml`
 - `cc` build dependency pinned to exact version `=1.1.30`
 
 ## Build Profiles

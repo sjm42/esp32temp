@@ -1,7 +1,6 @@
 // config.rs
 
 use crc::{CRC_32_ISCSI, Crc};
-use esp_idf_svc::nvs;
 
 use crate::*;
 
@@ -39,8 +38,8 @@ pub struct MyConfig {
 impl Default for MyConfig {
     fn default() -> Self {
         Self {
-            wifi_ssid: option_env!("WIFI_SSID").unwrap_or("internet").into(),
-            wifi_pass: option_env!("WIFI_PASS").unwrap_or("password").into(),
+            wifi_ssid: option_env!("WIFI_SSID").unwrap_or("").into(),
+            wifi_pass: option_env!("WIFI_PASS").unwrap_or("").into(),
             wifi_wpa2ent: false,
             wifi_username: String::new(),
 
@@ -63,6 +62,10 @@ impl Default for MyConfig {
 }
 
 impl MyConfig {
+    pub fn has_wifi_config(&self) -> bool {
+        !self.wifi_ssid.trim().is_empty()
+    }
+
     pub fn from_nvs(nvs: &mut nvs::EspNvs<nvs::NvsDefault>) -> Option<Self> {
         let mut nvsbuf = [0u8; NVS_BUF_SIZE];
         info!("Reading up to {sz} bytes from nvs...", sz = NVS_BUF_SIZE);

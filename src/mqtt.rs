@@ -7,6 +7,13 @@ use crate::*;
 
 #[allow(unreachable_code)]
 pub async fn run_mqtt(state: Arc<Pin<Box<MyState>>>) -> anyhow::Result<()> {
+    if state.ap_mode {
+        info!("MQTT is disabled in AP mode.");
+        loop {
+            sleep(Duration::from_secs(3600)).await;
+        }
+    }
+
     if !state.config.mqtt_enable {
         info!("MQTT is disabled.");
         // we cannot return, otherwise tokio::select in main() will exit

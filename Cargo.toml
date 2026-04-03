@@ -1,6 +1,6 @@
 [package]
 name = "esp32temp"
-version = "2.0.1"
+version = "2.1.0"
 authors = ["Sami J. Mäkinen <sjm@iki.fi>"]
 edition = "2024"
 
@@ -27,13 +27,8 @@ esp-idf-svc = { version = "0.52", features = ["alloc", "experimental"] }
 humantime = "2.3"
 postcard = { version = "1.1", features = ["alloc", "use-crc"] }
 serde = "1.0"
-tokio = { version = "1.50", features = ["rt", "net", "io-util"] }
+tokio = { version = "1.51", features = ["rt", "net", "io-util"] }
 tracing = "0.1"
-
-# these had to be fixed, negative temperatures were broken
-# also, migrated to embedded-hal 1.0
-ds18b20 = { git = "https://github.com/sjm42/ds18b20" }
-one-wire-bus = { git = "https://github.com/sjm42/one-wire-bus" }
 
 
 [build-dependencies]
@@ -41,6 +36,10 @@ build-data = "0.3"
 embuild = "0.33"
 anyhow = "1.0"
 flate2 = "1.1"
+
+# RMT-backed official ESP-IDF 1-Wire component used via esp-idf-hal::onewire
+[[package.metadata.esp-idf-sys.extra_components]]
+remote_component = { name = "onewire_bus", version = "^1.0.4" }
 
 
 [profile.release]

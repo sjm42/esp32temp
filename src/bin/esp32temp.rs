@@ -3,15 +3,16 @@
 #![warn(clippy::large_futures)]
 
 use esp_idf_svc::{
-    eventloop::EspSystemEventLoop, hal::gpio, nvs, ota::EspOta, ping, timer::EspTaskTimerService,
-    wifi::WifiDriver,
+    eventloop::EspSystemEventLoop, hal::gpio, ota::EspOta, ping, timer::EspTaskTimerService,
 };
 use esp_idf_sys::esp;
-use one_wire_bus::OneWire;
 
 use esp32temp::*;
 
 const CONFIG_RESET_COUNT: i32 = 9;
+const BUTTON_POLL_MS: u64 = 500;
+const BUTTON_BLINK_MS: u64 = 500;
+const BUTTON_COUNTDOWN_STEP_MS: u64 = 500;
 
 // use esp_idf_sys::esp_app_desc;
 // esp_app_desc!();
@@ -57,6 +58,11 @@ fn main() -> anyhow::Result<()> {
         }
         Err(e) => panic!("Could not get namespace {ns}: {e:?}"),
     };
+    let mut ap_mode = matches!(nvs.get_u8(AP_MODE_NVS_KEY)?, Some(1));
+    if ap_mode {
+        info!("One-shot AP mode requested for this boot.");
+        let _ = nvs.remove(AP_MODE_NVS_KEY)?;
+    }
 
     #[cfg(feature = "reset_settings")]
     let config = {
@@ -78,15 +84,23 @@ fn main() -> anyhow::Result<()> {
         // using settings saved on nvs if we could find them
         Some(c) => c,
     };
+    if !config.has_wifi_config() {
+        ap_mode = true;
+        info!("No WiFi configuration stored, starting in AP mode.");
+    }
     info!("My config:\n{config:#?}");
 
     let peripherals = Peripherals::take().unwrap();
     let pins = peripherals.pins;
     #[cfg(feature = "esp32-c3")]
     let button = gpio::PinDriver::input(pins.gpio9.degrade_input(), Pull::Up)?;
+    #[cfg(feature = "esp32-c3")]
+    let led = gpio::PinDriver::output(pins.gpio8.degrade_output())?;
 
     #[cfg(feature = "esp-wroom-32")]
     let button = gpio::PinDriver::input(pins.gpio0.degrade_input(), Pull::Up)?;
+    #[cfg(feature = "esp-wroom-32")]
+    let led = gpio::PinDriver::output(pins.gpio2.degrade_output())?;
 
     #[cfg(feature = "esp32-c3")]
     let hw_onewire_pins = Box::new([
@@ -98,7 +112,6 @@ fn main() -> anyhow::Result<()> {
         (pins.gpio5.degrade_input_output(), "gpio5"),
         (pins.gpio6.degrade_input_output(), "gpio6"),
         (pins.gpio7.degrade_input_output(), "gpio7"),
-        (pins.gpio8.degrade_input_output(), "gpio8"),
         (pins.gpio10.degrade_input_output(), "gpio10"),
     ]);
 
@@ -121,18 +134,36 @@ fn main() -> anyhow::Result<()> {
     let mut n_sensors = 0;
     let mut onewire_pins = Vec::with_capacity(hw_onewire_pins.len());
     for (i, (mut pin, name)) in hw_onewire_pins.into_iter().enumerate() {
-        let pin_drv =
-            gpio::PinDriver::input_output_od(unsafe { pin.reborrow() }, Pull::Up).unwrap();
-        let mut w = OneWire::new(pin_drv).unwrap();
-        if let Ok(devs) = scan_1wire(&mut w) {
-            drop(w);
-            n_sensors += devs.len();
-            info!("Onewire response[{i}]:\n{name} {devs:#?}");
-            onewire_pins.push(MyOnewire {
-                pin,
-                name: name.to_string(),
-                ids: devs,
-            });
+        let mut w = OWDriver::new(unsafe { pin.reborrow() })?;
+        match scan_1wire(&mut w) {
+            Ok(scan) => {
+                drop(w);
+
+                if scan.all_devices.is_empty() {
+                    info!("Onewire response[{i}]: {name} no devices");
+                } else {
+                    for device in scan.all_devices.iter() {
+                        info!(
+                            "Onewire response[{i}]: {name} device {} family=0x{:02X}",
+                            format_device_id(device),
+                            device.family_code(),
+                        );
+                    }
+                }
+
+                if !scan.ds18b20_devices.is_empty() {
+                    n_sensors += scan.ds18b20_devices.len();
+                    onewire_pins.push(MyOnewire {
+                        pin,
+                        name: name.to_string(),
+                        ids: scan.ds18b20_devices,
+                    });
+                }
+            }
+            Err(e) => {
+                drop(w);
+                error!("Onewire scan error[{i}] {name}: {e:#}");
+            }
         }
     }
 
@@ -152,13 +183,22 @@ fn main() -> anyhow::Result<()> {
         Some(nvs_default_partition),
     )?;
 
-    let state = Box::pin(MyState::new(config, nvs, ota_slot, onewire_pins, temp_data));
+    let state = Box::pin(MyState::new(
+        ap_mode,
+        config,
+        nvs,
+        ota_slot,
+        onewire_pins,
+        temp_data,
+        led,
+    ));
     let shared_state = Arc::new(state);
 
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?
         .block_on(Box::pin(async move {
+            shared_state.led_off().await.ok();
             let wifi_loop = WifiLoop {
                 state: shared_state.clone(),
                 wifi: None,
@@ -186,22 +226,21 @@ async fn poll_reset(
     mut state: Arc<Pin<Box<MyState>>>,
     button: PinDriver<'static, Input>,
 ) -> anyhow::Result<()> {
-    // wait for NTP
+    let mut uptime: u32 = 0;
+    let mut uptime_ms: u64 = 0;
     loop {
-        sleep(Duration::from_secs(1)).await;
-        if *state.ntp_ok.read().await {
-            break;
+        sleep(Duration::from_millis(BUTTON_POLL_MS)).await;
+        uptime_ms += BUTTON_POLL_MS;
+        if uptime_ms >= 1000 {
+            let secs = (uptime_ms / 1000) as u32;
+            uptime += secs;
+            uptime_ms %= 1000;
+
+            let mut data = state.data.write().await;
+            data.uptime = uptime;
+            data.uptime_s =
+                humantime::format_duration(Duration::from_secs(uptime as u64)).to_string();
         }
-    }
-
-    let start_ts = Utc::now().timestamp();
-    loop {
-        sleep(Duration::from_secs(5)).await;
-
-        let uptime = Utc::now().timestamp() - start_ts;
-        state.data.write().await.uptime = uptime as u32;
-        state.data.write().await.uptime_s =
-            humantime::format_duration(Duration::new(uptime as u64, 0)).to_string();
 
         if *state.reset.read().await {
             esp_idf_hal::reset::restart();
@@ -218,26 +257,48 @@ async fn reset_button<'a>(
     button: &PinDriver<'a, Input>,
 ) -> anyhow::Result<()> {
     let mut reset_cnt = CONFIG_RESET_COUNT;
+    let mut blink_on = true;
+    let mut blink_elapsed_ms = 0;
+    let mut countdown_elapsed_ms = 0;
 
     while button.is_low() {
-        // button is pressed and kept down, countdown and factory reset if reach zero
-        let msg = format!("Reset? {reset_cnt}");
-        error!("{msg}");
+        if countdown_elapsed_ms == 0 {
+            let msg = format!("Reset? {reset_cnt}");
+            error!("{msg}");
 
-        if reset_cnt == 0 {
-            // okay do factory reset now
-            error!("Factory resetting...");
+            if reset_cnt == 0 {
+                error!("Factory resetting...");
+                state.led_on().await?;
 
-            let new_config = MyConfig::default();
-            new_config.to_nvs(&mut *state.nvs.write().await)?;
-            sleep(Duration::from_millis(2000)).await;
-            esp_idf_hal::reset::restart();
+                let new_config = MyConfig::default();
+                let mut nvs = state.nvs.write().await;
+                new_config.to_nvs(&mut nvs)?;
+                let _ = nvs.remove(AP_MODE_NVS_KEY)?;
+                sleep(Duration::from_millis(2000)).await;
+                esp_idf_hal::reset::restart();
+            }
+
+            reset_cnt -= 1;
         }
 
-        reset_cnt -= 1;
-        sleep(Duration::from_millis(500)).await;
-        continue;
+        if blink_elapsed_ms == 0 {
+            state.set_led(blink_on).await?;
+            blink_on = !blink_on;
+        }
+
+        sleep(Duration::from_millis(BUTTON_POLL_MS)).await;
+        blink_elapsed_ms = (blink_elapsed_ms + BUTTON_POLL_MS) % BUTTON_BLINK_MS;
+        countdown_elapsed_ms = (countdown_elapsed_ms + BUTTON_POLL_MS) % BUTTON_COUNTDOWN_STEP_MS;
     }
+    state.led_off().await?;
+
+    if !state.ap_mode {
+        info!("Short button press, rebooting into AP mode for manual configuration.");
+        state.request_ap_mode_on_next_boot().await?;
+        sleep(Duration::from_millis(250)).await;
+        esp_idf_hal::reset::restart();
+    }
+
     Ok(())
 }
 
