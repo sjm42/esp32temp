@@ -66,6 +66,11 @@
 </section>
 
 <section class="panel">
+<h2>Detected sensors</h2>
+<div id="detected-sensors">- - -</div>
+</section>
+
+<section class="panel">
 <h2>Temperatures</h2>
 <div id="temperatures">- - -</div>
 </section>

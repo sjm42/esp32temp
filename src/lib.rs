@@ -72,6 +72,12 @@ pub struct TempData {
 }
 
 #[derive(Clone, Debug, Serialize)]
+pub struct Sensor {
+    pub iopin: String,
+    pub sensor: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
 pub struct TempValues {
     pub timestamp: i64,
     pub last_update: String,
@@ -105,6 +111,11 @@ impl Default for TempValues {
     fn default() -> Self {
         Self::new()
     }
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct SensorValues {
+    pub sensors: Vec<Sensor>,
 }
 
 #[derive(Clone, Debug, Serialize)]

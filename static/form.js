@@ -4,6 +4,7 @@ document.addEventListener("DOMContentLoaded", function () {
     bindForm("esp32cfg", handleCfgSubmit);
     bindForm("esp32fw", handleFwSubmit);
     initUptime();
+    initDetectedSensors();
     initTemperatures();
 });
 
@@ -85,6 +86,36 @@ function initUptime() {
     window.setInterval(updateUptime, 10e3);
 }
 
+async function updateDetectedSensors() {
+    const node = document.getElementById("detected-sensors");
+    if (!node) return;
+
+    try {
+        const response = await fetch("/sensors");
+        const json = await response.json();
+
+        if (!json.sensors.length) {
+            node.innerHTML = '<div class="table-meta">No DS18B20 sensors detected at boot</div>';
+            return;
+        }
+
+        let rows = "<tr><th>IO pin</th><th>Sensor</th></tr>\n";
+        json.sensors.forEach((sensor) => {
+            rows += `<tr><td><code>${sensor.iopin}</code></td><td>${sensor.sensor}</td></tr>\n`;
+        });
+        node.innerHTML =
+            `<div class="table-meta">Detected at boot: <b>${json.sensors.length}</b></div>` +
+            `<table>${rows}</table>`;
+    } catch (_error) {
+        node.textContent = "Sensor inventory unavailable";
+    }
+}
+
+function initDetectedSensors() {
+    if (!document.getElementById("detected-sensors")) return;
+    updateDetectedSensors();
+}
+
 async function updateTemperatures() {
     const node = document.getElementById("temperatures");
     if (!node) return;
@@ -97,7 +128,7 @@ async function updateTemperatures() {
             rows += `<tr><td><code>${temp.iopin}</code></td><td>${temp.sensor}</td><td class="temperature-value">${temp.value}</td></tr>\n`;
         });
         node.innerHTML =
-            `<div class="temperature-meta">Last update: <b>${json.last_update}</b></div>` +
+            `<div class="table-meta">Last update: <b>${json.last_update}</b></div>` +
             `<table>${rows}</table>`;
     } catch (_error) {
         node.textContent = "Temperature data unavailable";

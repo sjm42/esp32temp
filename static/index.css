@@ -64,6 +64,7 @@ p {
 }
 
 #uptime,
+#detected-sensors,
 #temperatures {
   margin-top: 8px;
   padding: 10px 12px;
@@ -83,12 +84,15 @@ table {
 }
 
 form[name="esp32cfg"] tr:nth-child(odd),
+#detected-sensors tr:nth-child(odd),
 #temperatures tr:nth-child(odd) {
   background: rgba(15, 66, 74, 0.03);
 }
 
 form[name="esp32cfg"] th,
 form[name="esp32cfg"] td,
+#detected-sensors th,
+#detected-sensors td,
 #temperatures th,
 #temperatures td {
   text-align: left;
@@ -195,7 +199,7 @@ input[id="firmware"] {
   background: linear-gradient(140deg, #bf4a4a 0%, #912e2e 100%);
 }
 
-.temperature-meta {
+.table-meta {
   margin-bottom: 8px;
 }
 

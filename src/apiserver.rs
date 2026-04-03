@@ -72,6 +72,7 @@ pub async fn run_api_server(state: Arc<Pin<Box<MyState>>>) -> anyhow::Result<()>
         .route("/form.js", get(get_formjs))
         .route("/index.css", get(get_indexcss))
         .route("/uptime", get(get_uptime))
+        .route("/sensors", get(get_sensors))
         .route("/temp", get(get_temp))
         .route(
             "/config",
@@ -127,6 +128,29 @@ pub async fn get_uptime(State(state): State<Arc<Pin<Box<MyState>>>>) -> (StatusC
         uptime_s: state.data.read().await.uptime_s.clone(),
     };
     (StatusCode::OK, Json(uptime))
+}
+
+pub async fn get_sensors(
+    State(state): State<Arc<Pin<Box<MyState>>>>,
+) -> (StatusCode, Json<SensorValues>) {
+    let cnt = state.api_cnt.fetch_add(1, Ordering::Relaxed);
+    info!("#{cnt} get_sensors()");
+
+    let sensors = {
+        let onewires = state.sensors.read().await;
+        let sensors = onewires
+            .iter()
+            .flat_map(|onew| {
+                onew.ids.iter().map(|id| Sensor {
+                    iopin: onew.name.clone(),
+                    sensor: format_device_id(id),
+                })
+            })
+            .collect::<Vec<Sensor>>();
+        SensorValues { sensors }
+    };
+
+    (StatusCode::OK, Json(sensors))
 }
 
 pub async fn get_temp(
