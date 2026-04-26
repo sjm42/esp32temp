@@ -800,7 +800,7 @@ dependencies = [
 
 [[package]]
 name = "esp32temp"
-version = "2.1.1"
+version = "2.1.2"
 dependencies = [
  "anyhow",
  "askama",
@@ -809,7 +809,6 @@ dependencies = [
  "build-data",
  "chrono",
  "crc",
- "embedded-hal 1.0.0",
  "embedded-svc",
  "embuild",
  "esp-idf-hal",

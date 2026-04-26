@@ -3,13 +3,14 @@
 Temperature measurement with ESP32 and DS18B20 sensor(s).
 
 Provides a web interface for monitoring temperatures and configuring the device,
-with optional MQTT publishing for IoT integration. Supports over-the-air (OTA) firmware updates.
+with optional MQTT publishing and ESPHome native API integration. Supports over-the-air (OTA)
+firmware updates.
 
 ## Hardware Targets
 
 This firmware supports two hardware targets using Cargo features and target-specific build commands:
 
-- **ESP32-C3** (RISC-V) via feature `esp32-c3` (default)
+- **ESP32-C3** (RISC-V) via feature `esp32-c3` (default in `Cargo.toml` and `.cargo/config.toml`)
 - **ESP-WROOM-32** (Xtensa ESP32) via feature `esp-wroom-32`
 
 Factory reset button GPIO differs by target:
@@ -54,6 +55,9 @@ Optional helper environment file:
 source env.sh   # WIFI_SSID/WIFI_PASS defaults for build-time config
 ```
 
+`env.sh` is local convenience setup for C3 builds. The target-specific scripts set the necessary
+toolchain, target, MCU, and feature flags for their board.
+
 Hardware-specific scripts:
 
 ```bash
@@ -72,8 +76,8 @@ espup update
 cargo install-update -a
 ```
 
-The ESP-IDF component manager lockfile for the RMT-backed 1-Wire bus is committed as
-`components_esp32c3.lock`.
+ESP-IDF component manager lockfiles for the RMT-backed 1-Wire bus are committed for both
+supported chips: `components_esp32c3.lock` and `components_esp32.lock`.
 
 ## Internals
 
@@ -81,17 +85,18 @@ The ESP-IDF component manager lockfile for the RMT-backed 1-Wire bus is committe
 
 The firmware runs on a **Tokio single-threaded async runtime** on top of ESP-IDF / FreeRTOS.
 The main task stack is set to 20 KB (`sdkconfig.defaults`) to accommodate Tokio.
-The entry point (`src/bin/esp32temp.rs`) launches six concurrent tasks via `tokio::select!`,
+The entry point (`src/bin/esp32temp.rs`) launches seven concurrent tasks via `tokio::select!`,
 meaning all tasks run cooperatively and the firmware reboots if any of them exits:
 
-| Task             | Source         | Purpose                                                           |
-|------------------|----------------|-------------------------------------------------------------------|
-| `poll_sensors`   | `measure.rs`   | Reads DS18B20 sensors at a configurable interval (default 60 s)   |
-| `run_api_server` | `apiserver.rs` | Axum HTTP server on port 80 (web UI + REST API)                   |
-| `run_mqtt`       | `mqtt.rs`      | Publishes temperature data to an MQTT broker (optional)           |
-| `wifi_loop`      | `wifi.rs`      | Manages WiFi connection, reconnects on drop                       |
-| `pinger`         | `esp32temp.rs` | Pings the gateway every 5 minutes, reboots on failure             |
-| `poll_reset`     | `esp32temp.rs` | Tracks uptime, monitors target-specific factory-reset button GPIO |
+| Task              | Source           | Purpose                                                               |
+|-------------------|------------------|-----------------------------------------------------------------------|
+| `poll_sensors`    | `measure.rs`     | Reads DS18B20 sensors at a configurable interval (default 60 s)       |
+| `run_api_server`  | `apiserver.rs`   | Axum HTTP server on port 80 (web UI + REST API)                       |
+| `run_mqtt`        | `mqtt.rs`        | Publishes temperature data to an MQTT broker (optional)               |
+| `run_esphome_api` | `esphome_api.rs` | Exposes sensors through the ESPHome native API on port 6053 (optional) |
+| `wifi_loop`       | `wifi.rs`        | Manages WiFi connection, reconnects on drop                           |
+| `pinger`          | `esp32temp.rs`   | Pings the gateway every 5 minutes, reboots on failure                 |
+| `poll_reset`      | `esp32temp.rs`   | Tracks uptime, monitors target-specific reset/AP-mode button GPIO     |
 
 ### Startup Sequence
 
@@ -104,6 +109,10 @@ meaning all tasks run cooperatively and the firmware reboots if any of them exit
 7. Shared state construction and Tokio runtime launch
 8. All concurrent tasks start — `poll_sensors` and `run_api_server` block until WiFi is up,
    `poll_sensors` additionally waits for NTP time sync before beginning measurements
+
+If no WiFi SSID is stored, or if a one-shot AP boot was requested by the reset button, the device
+starts an open access point named `esp32temp` at `10.42.42.1` for manual configuration. Sensor
+polling, MQTT, and ESPHome API serving are disabled while in AP mode.
 
 ### Shared State
 
@@ -120,6 +129,10 @@ On boot, if the NVS data is missing or fails CRC validation, defaults are used a
 
 Default WiFi credentials can be injected at build time via environment variables
 `WIFI_SSID` and `WIFI_PASS`.
+
+The persisted config includes WiFi, IPv4/DHCP, ESPHome API enablement, MQTT settings, sensor retry
+count, and sensor poll interval. `reset_settings` can be enabled as a Cargo feature to rewrite NVS
+with default config during boot.
 
 ### Temperature Measurement
 
@@ -140,6 +153,7 @@ The Axum web server (`apiserver.rs`) provides:
 - `GET /favicon.ico` — embedded favicon
 - `GET /form.js` — embedded JavaScript for UI polling/form submissions
 - `GET /index.css` — embedded stylesheet for the web UI
+- `GET /sensors` — JSON inventory of DS18B20 sensors detected at boot
 - `GET /temp` — JSON object with current sensor readings and metadata (invalid values filtered out)
 - `GET /uptime` — JSON uptime in seconds and human-readable string
 - `GET /config` / `POST /config` — read or update device configuration (POST triggers reboot)
@@ -147,7 +161,8 @@ The Axum web server (`apiserver.rs`) provides:
 - `POST /fw` — OTA firmware update: provide an HTTP URL to a firmware binary,
   which is streamed directly into the inactive OTA partition and activated on reboot
 
-Static assets (favicon, JavaScript, CSS) are embedded in the binary via `include_bytes!`.
+Static assets (favicon, JavaScript, CSS) are gzip-compressed by `build.rs` and embedded in the
+binary via `include_bytes!`; handlers return them with `Content-Encoding: gzip`.
 
 ### MQTT Publishing
 
@@ -159,12 +174,27 @@ on each sensor poll cycle:
 
 Uses QoS AtLeastOnce with a 25-second keep-alive interval.
 
+MQTT is disabled in AP mode.
+
+### ESPHome Native API
+
+When `esphome_enable` is set in config, `esphome_api.rs` listens on TCP port 6053 after WiFi is up.
+It implements the unencrypted ESPHome native API framing needed for discovery/listing and state
+subscriptions. Exposed entities are:
+
+- `uptime` sensor in seconds
+- `last_update` text sensor
+- one temperature sensor per DS18B20 device detected at boot
+
+ESPHome API serving is disabled in AP mode.
+
 ### WiFi Management
 
-`wifi.rs` supports WPA2 Personal, WPA2 Enterprise (EAP-PEAP), and open networks.
-Static IP or DHCP can be configured. The device ID is derived from the WiFi MAC address
-(`esp32temp-XXXXXXXXXXXX`). On initial connection failure (30 s timeout), the device reboots.
-After connecting, the `stay_connected` loop handles reconnection automatically.
+`wifi.rs` supports station mode with WPA2 Personal, WPA2 Enterprise, or open networks, plus open
+AP mode for initial/manual configuration. Static IP or DHCP can be configured for station mode.
+The device ID is derived from the WiFi MAC address (`esp32temp-XXXXXXXXXXXX`). On initial station
+connection failure (30 s timeout), the device reboots. After connecting, the `stay_connected` loop
+handles reconnection automatically.
 
 ### OTA Firmware Updates
 
@@ -175,6 +205,8 @@ and the device reboots into it. If the new firmware fails, the previous slot rem
 
 ### Factory Reset
 
-Holding the factory-reset button for approximately 5 seconds (9 half-second countdown ticks)
-triggers a factory reset: default config is written to NVS and the device reboots.
-The reset GPIO is `GPIO9` for `esp32-c3` builds and `GPIO0` for `esp-wroom-32` builds.
+Holding the reset button for approximately 5 seconds (9 half-second countdown ticks) triggers a
+factory reset: default config is written to NVS, any one-shot AP request is cleared, and the device
+reboots. A short press while running in station mode stores a one-shot AP-mode request and reboots
+for manual configuration. The reset GPIO is `GPIO9` for `esp32-c3` builds and `GPIO0` for
+`esp-wroom-32` builds.

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-ESP32 temperature monitoring firmware in Rust. Reads DS18B20 OneWire sensors and exposes data via a web UI and optional MQTT. Supports ESP32 (Xtensa) and ESP32-C3 (RISC-V). Currently configured for **ESP32-C3**.
+ESP32 temperature monitoring firmware in Rust. Reads DS18B20 OneWire sensors and exposes data via a web UI, optional MQTT, and optional ESPHome native API. Supports ESP32 (Xtensa) and ESP32-C3 (RISC-V). Currently configured for **ESP32-C3**.
 
 ## Build Commands
 
@@ -17,6 +17,7 @@ cargo clippy --all-targets -- -D warnings
 ./flash_wroom32         # Build+flash+monitor for ESP-WROOM-32 (Xtensa toolchain)
 ./make_ota_image_c3     # Create firmware-c3.bin for OTA updates
 ./make_ota_image_wroom32 # Create firmware-wroom32.bin for OTA updates
+MCU=esp32 cargo +esp check --target xtensa-esp32-espidf --no-default-features --features=esp-wroom-32
 ```
 
 There is no test suite — testing is done manually on hardware.
@@ -35,11 +36,12 @@ If manually changing defaults, keep these aligned:
 
 ## Architecture
 
-Single async binary (`src/bin/esp32temp.rs`) using Tokio single-threaded runtime. Runs concurrent tasks via `tokio::select!`:
+Single async binary (`src/bin/esp32temp.rs`) using Tokio single-threaded runtime. Runs seven concurrent tasks via `tokio::select!`:
 
 - **poll_sensors** (`measure.rs`) — scans DS18B20 sensors on configured GPIO pins with retry logic using the ESP-IDF `onewire_bus` RMT backend
 - **run_api_server** (`apiserver.rs`) — Axum HTTP server on port 80 with REST API + HTML UI (Askama templates in `templates/`)
 - **run_mqtt** (`mqtt.rs`) — optional MQTT publisher for sensor data
+- **run_esphome_api** (`esphome_api.rs`) — optional ESPHome native API server on TCP port 6053
 - **wifi_loop** (`wifi.rs`) — WiFi connection manager with auto-reconnect, supports WPA2 Personal/Enterprise
 - **pinger** — network connectivity monitor, reboots on prolonged failure
 - **poll_reset** — target-specific button handler for factory reset / one-shot AP boot (GPIO9 on C3, GPIO0 on WROOM32)
@@ -47,11 +49,11 @@ Single async binary (`src/bin/esp32temp.rs`) using Tokio single-threaded runtime
 Shared state: `Arc<Pin<Box<MyState>>>` with `RwLock` fields (`state.rs`).
 
 Configuration (`config.rs`): persisted in NVS using `postcard` serialization with CRC-32 checksum. Editable via web UI (POST /config triggers reboot).
-If no WiFi configuration is stored, the device boots into AP mode for initial setup.
+If no WiFi configuration is stored, the device boots into open AP mode (`esp32temp` at `10.42.42.1`) for initial setup. A short reset-button press while in station mode requests one-shot AP mode for the next boot; a long hold rewrites default config.
 
 ## Key API Endpoints
 
-`GET /temp` — JSON temperature readings, `GET /config` and `POST /config` — configuration, `POST /fw` — OTA firmware update from URL, `GET /reset_config` — factory reset. UI static assets are served at `GET /form.js`, `GET /index.css`, and `GET /favicon.ico`.
+`GET /temp` — JSON temperature readings, `GET /sensors` — boot-time sensor inventory, `GET /config` and `POST /config` — configuration, `POST /fw` — OTA firmware update from URL, `GET /reset_config` — factory reset. UI static assets are gzip-compressed by `build.rs`, embedded, and served at `GET /form.js`, `GET /index.css`, and `GET /favicon.ico`.
 
 ## Pin Configuration
 
@@ -62,7 +64,8 @@ GPIO pin assignments are feature-gated in `src/bin/esp32temp.rs`. Each chip vari
 - Native 1-Wire support comes from Espressif's `onewire_bus` component declared in `Cargo.toml` under `package.metadata.esp-idf-sys.extra_components`
 - `src/rmt_ow.rs` is a small local wrapper around the ESP-IDF RMT 1-Wire API that enables the native `en_pull_up` flag explicitly
 - ESP-IDF version pinned to `v5.5.4` in `.cargo/config.toml`
-- `cc` build dependency pinned to exact version `=1.1.30`
+- ESP-IDF component manager lockfiles are committed per chip: `components_esp32c3.lock` and `components_esp32.lock`
+- `esphome_api.rs` implements the unencrypted ESPHome native API subset needed for hello/device info/entity listing/state subscriptions; exposed entities are uptime, last update, and detected DS18B20 temperatures
 
 ## Build Profiles
 
