@@ -11,6 +11,8 @@ rustflags = [
     "mio_unsupported_force_poll_poll",
     "--cfg",
     "espidf_time64",
+    "-A",
+    "linker-messages",
     "-C",
     "default-linker-libraries",
 ]
@@ -23,6 +25,8 @@ rustflags = [
     "mio_unsupported_force_poll_poll",
     "--cfg",
     "espidf_time64",
+    "-A",
+    "linker-messages",
 ]
 
 [unstable]

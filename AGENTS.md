@@ -15,6 +15,8 @@ UI assets are embedded into the firmware: `templates/index.html.ask` (Askama tem
 - `MCU=esp32 cargo +esp check --target xtensa-esp32-espidf --no-default-features --features=esp-wroom-32` — validate WROOM32 code paths with the Xtensa toolchain.
 - `cargo fmt` — format Rust code (use before commits).
 - `cargo clippy --all-targets -- -D warnings` — lint; the repo includes `clippy.toml`.
+- `cargo outdated --root-deps-only` — check for direct dependency updates before changing `Cargo.toml`.
+- `cargo update` — refresh compatible locked dependency versions without changing manifest requirements.
 
 ## Coding Style & Naming Conventions
 Use standard Rust formatting (`cargo fmt`) with 4-space indentation. Follow idiomatic Rust naming: `snake_case` for functions/modules/files, `CamelCase` for types, `SCREAMING_SNAKE_CASE` for constants.
@@ -25,6 +27,8 @@ The 1-Wire implementation is RMT-backed through Espressif's native `onewire_bus`
 
 ## Testing Guidelines
 There is currently no dedicated `tests/` directory or unit-test suite in the repository. At minimum, run `cargo check`, `cargo clippy`, and a release build (`cargo build -r`) before opening a PR.
+
+When touching dependencies, also run `cargo outdated --root-deps-only` and `cargo update`. Full `cargo outdated` output can list transitive updates owned by upstream crates; prefer direct manifest changes only when the root dependency has a compatible or intentionally reviewed newer version.
 
 For behavior changes, document manual validation on hardware (board type, sensor setup, WiFi/AP mode, and observed HTTP API, MQTT, and ESPHome API behavior as applicable).
 

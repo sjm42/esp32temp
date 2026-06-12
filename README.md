@@ -76,6 +76,18 @@ espup update
 cargo install-update -a
 ```
 
+Dependency checks:
+
+```bash
+cargo outdated --root-deps-only
+cargo update
+```
+
+`cargo outdated --root-deps-only` shows direct dependency updates worth considering for
+`Cargo.toml`. `cargo update` refreshes compatible locked versions without changing declared
+requirements. Full `cargo outdated` output may include transitive dependencies that are owned by
+upstream crates rather than this firmware's manifest.
+
 ESP-IDF component manager lockfiles for the RMT-backed 1-Wire bus are committed for both
 supported chips: `components_esp32c3.lock` and `components_esp32.lock`.
 

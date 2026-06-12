@@ -41,7 +41,7 @@ fn main() -> anyhow::Result<()> {
         let mut ota = EspOta::new()?;
         let running_slot = ota.get_running_slot()?;
         ota.mark_running_slot_valid()?;
-        let ota_slot = format!("{} ({:?})", &running_slot.label, running_slot.state);
+        let ota_slot = format!("{} ({:?})", running_slot.label, running_slot.state);
         info!("OTA slot: {ota_slot}");
         ota_slot
     };
