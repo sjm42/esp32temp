@@ -25,9 +25,8 @@ Adding support for other ESP32 boards is mostly a matter of defining a new featu
 
 ### Prerequisites
 
-- Rust nightly with `rust-src` (default path in `rust-toolchain.toml`)
+- The Espressif `esp` Rust toolchain installed with `espup` (selected by `rust-toolchain.toml`)
 - ESP tools: `espflash`, `ldproxy`, `espup`
-- Xtensa builds (`ESP-WROOM-32`) also require the `esp` Rust toolchain (`cargo +esp`)
 
 Debian/Ubuntu packages and Rust bootstrap example:
 
@@ -38,10 +37,9 @@ chmod 755 rustup.sh
 ./rustup.sh
 
 . "$HOME/.cargo/env"
-rustup toolchain add nightly
-espup install
-
 cargo install espmonitor espup ldproxy flip-link cargo-espflash espflash
+espup install
+. "$HOME/export-esp.sh"
 
 # optional & useful
 cargo install cargo-binutils cargo-embed cargo-flash cargo-generate cargo-update probe-run
