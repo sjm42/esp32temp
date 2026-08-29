@@ -60,7 +60,7 @@
 <h2>OTA firmware update (DANGER)</h2>
 <form action="/fw" method="POST" name="esp32fw">
   <label for="firmware">Firmware URL:</label>
-  <input type="text" id="firmware" name="url">
+  <input type="text" id="firmware" name="url" placeholder="http://">
   <input type="submit" value="Update!">
 </form>
 </section>

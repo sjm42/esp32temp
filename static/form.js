@@ -168,11 +168,11 @@ const handleFwSubmit = async (event) => {
 
     try {
         const parsed = new URL(firmwareUrl);
-        if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-            throw new Error("Firmware URL must start with http:// or https://");
+        if (parsed.protocol !== "http:") {
+            throw new Error("Firmware URL must start with http://");
         }
     } catch (_error) {
-        setFormStatus(form, "error", "Firmware URL must start with http:// or https://");
+        setFormStatus(form, "error", "Firmware URL must start with http://");
         return;
     }
 
