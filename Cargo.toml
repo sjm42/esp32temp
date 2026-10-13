@@ -1,8 +1,14 @@
 [package]
 name = "esp32temp"
-version = "2.1.5"
+version = "2.2.0"
 authors = ["Sami J. Mäkinen <sjm@iki.fi>"]
 edition = "2024"
+
+
+[lints.clippy]
+expect_used = "deny"
+unwrap_used = "deny"
+panic = "deny"
 
 
 [features]
@@ -10,35 +16,42 @@ default = ["esp32-c3"]
 reset_settings = []
 esp32-c3 = []
 esp-wroom-32 = []
+# Diagnostic image only; also requires sdkconfig.ota-probe.defaults.
+ota-rollback-probe = []
 
 
 [dependencies]
-anyhow = "1"
-askama = "0"
-axum = { version = "0", features = ["http1", "json", "form"] }
-axum-macros = "0"
-chrono = "0"
-crc = "3"
-embedded-svc = { version = "0", features = ["experimental"] }
-esp-idf-hal = "0"
-esp-idf-sys = { version = "0", features = ["binstart"] }
-esp-idf-svc = { version = "0", features = ["alloc", "experimental"] }
-humantime = "2"
-postcard = { version = "1", features = ["alloc", "use-crc"] }
-serde = "1"
-tokio = { version = "1", features = ["rt", "net", "io-util"] }
-tracing = "0"
+anyhow = "1.0"
+askama = "0.16"
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "form", "tokio"] }
+chrono = "0.4"
+crc = "3.4"
+embedded-svc = "0.29"
+esp-idf-hal = "0.47"
+esp-idf-sys = { version = "0.38", features = ["binstart"] }
+esp-idf-svc = { version = "0.53", features = ["alloc", "experimental"] }
+humantime = "2.4"
+postcard = { version = "1.1", features = ["alloc", "use-crc"] }
+serde = "1.0"
+serde_json = "1.0"
+thiserror = "2.0"
+tokio = { version = "1.53", features = ["rt", "net", "io-util"] }
+tracing = { version = "0.1", features = ["log"] }
 
 
 [build-dependencies]
-build-data = "0"
-embuild = "0"
-anyhow = "1"
+build-data = "0.3"
+embuild = "0.33"
+anyhow = "1.0"
 flate2 = "1"
+
+# ESP-IDF 6.x supplies MQTT through the component registry.
+[[package.metadata.esp-idf-sys.extra_components]]
+remote_component = { name = "espressif/mqtt", version = "1.*" }
 
 # RMT-backed official ESP-IDF 1-Wire component used via esp-idf-hal::onewire
 [[package.metadata.esp-idf-sys.extra_components]]
-remote_component = { name = "onewire_bus", version = "^1.0.4" }
+remote_component = { name = "onewire_bus", version = "1.*" }
 
 
 [profile.release]
@@ -53,3 +66,5 @@ strip = true
 debug = true
 opt-level = 2
 lto = "off"
+
+# EOF
