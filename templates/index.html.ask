@@ -14,8 +14,74 @@
 <section class="panel">
 <h1>ESP32 temperature probe</h1>
 <p>Firmware version {{ crate::FW_VERSION }}</p>
-<p>OTA slot {{ askama::get_value::<String>("ota_slot")? }}</p>
 <div id="uptime">Uptime: - - -</div>
+</section>
+
+<section class="panel" aria-labelledby="ota-details-title">
+<h2 id="ota-details-title">OTA details</h2>
+{% let ota = askama::get_value::<crate::OtaDetails>("ota_details")? %}
+<div class="ota-details-grid">
+  <div>
+    <h3>Application</h3>
+    <dl class="ota-details-list">
+      <dt>Firmware version</dt><dd>{{ ota.application_version }}</dd>
+      <dt>ESP-IDF version</dt><dd>{{ ota.application_idf_version }}</dd>
+      <dt>Rollback in app build</dt><dd>{% if ota.application_rollback_enabled %}Enabled{% else %}Disabled{% endif %}</dd>
+      <dt>Image state at boot</dt><dd>{{ ota.running_state_at_boot }}</dd>
+    </dl>
+  </div>
+  <div>
+    <h3>Installed bootloader</h3>
+    {% match ota.bootloader %}
+    {% when Some with (bootloader) %}
+    <dl class="ota-details-list">
+      <dt>Version</dt><dd>{{ bootloader.version }}</dd>
+      <dt>ESP-IDF version</dt><dd>{{ bootloader.idf_version }}</dd>
+      <dt>Build date / time</dt><dd>{{ bootloader.built_at }}</dd>
+      <dt>Security version</dt><dd>{{ bootloader.secure_version }}</dd>
+    </dl>
+    {% when None %}
+    <p>Bootloader description unavailable.</p>
+    {% match ota.bootloader_error %}
+    {% when Some with (error) %}<p>{{ error }}</p>
+    {% when None %}
+    {% endmatch %}
+    {% endmatch %}
+  </div>
+</div>
+<div class="ota-slot-list">
+{% let slots = [
+    ("Running slot", &ota.running_slot),
+    ("Next boot slot", &ota.boot_slot),
+    ("Update target", &ota.update_slot)
+] %}
+{% for (title, slot) in slots %}
+  <div class="ota-slot">
+    <h3>{{ title }}</h3>
+    {% match slot %}
+    {% when Some with (slot) %}
+    <p><code>{{ slot.label }}</code> <span class="ota-state">{{ slot.state }}</span></p>
+    <p>{{ slot.size_bytes / 1024 }} KiB · offset <code>{{ "0x{:X}"|format(slot.address) }}</code></p>
+    {% when None %}
+    <p>Unavailable</p>
+    {% endmatch %}
+  </div>
+{% endfor %}
+</div>
+<p class="ota-note">Bootloader rollback: {{ ota.bootloader_rollback }}.</p>
+<p class="ota-note">Details captured at startup. The application build setting does not describe the installed bootloader.</p>
+{% match ota.probe %}
+{% when Some with (probe) %}
+<h3>Controlled rollback probe</h3>
+<p>{{ probe.message }}</p>
+{% if probe.can_test_fallback %}
+<p>The fallback test will restart this image without confirmation. Expect the previous firmware to return.</p>
+<form action="/ota-test/rollback" method="POST" name="otaProbe">
+  <input type="submit" value="Test fallback to previous firmware">
+</form>
+{% endif %}
+{% when None %}
+{% endmatch %}
 </section>
 
 <section class="panel">

@@ -28,6 +28,11 @@ Adding support for other ESP32 boards is mostly a matter of defining a new featu
 - The Espressif `esp` Rust toolchain installed with `espup` (selected by `rust-toolchain.toml`)
 - ESP tools: `espflash`, `ldproxy`, `espup`
 
+ESP-IDF is pinned to `v6.1`, with `esp-idf-hal` 0.47, `esp-idf-svc` 0.53 and
+`esp-idf-sys` 0.38. MQTT uses the managed `espressif/mqtt` 1.x component.
+After upgrading ESP-IDF, clear old native build caches with `cargo clean -p esp-idf-sys`
+and `cargo clean -p esp-idf-sys --release` for each target being built.
+
 Debian/Ubuntu packages and Rust bootstrap example:
 
 ```bash
@@ -86,7 +91,10 @@ cargo update
 requirements. Full `cargo outdated` output may include transitive dependencies that are owned by
 upstream crates rather than this firmware's manifest.
 
-ESP-IDF component manager lockfiles for the RMT-backed 1-Wire bus are committed for both
+Both OTA-image scripts reject images larger than the smallest OTA slot in `partitions.csv`.
+Their outputs are `firmware-c3.bin` and `firmware-wroom32.bin`.
+
+ESP-IDF component manager lockfiles for MQTT and the RMT-backed 1-Wire bus are committed for both
 supported chips: `components_esp32c3.lock` and `components_esp32.lock`.
 
 ## Internals
@@ -97,6 +105,10 @@ The firmware runs on a **Tokio single-threaded async runtime** on top of ESP-IDF
 The main task stack is set to 20 KB (`sdkconfig.defaults`) to accommodate Tokio.
 The entry point (`src/bin/esp32temp.rs`) launches seven concurrent tasks via `tokio::select!`,
 meaning all tasks run cooperatively and the firmware reboots if any of them exits:
+
+Firmware downloads and gateway pings run on one blocking worker with a 20 KB stack,
+so synchronous network calls do not block the async services. Fatal startup and task
+errors are logged before a controlled reboot. Clippy denies explicit panic, unwrap and expect calls.
 
 | Task              | Source           | Purpose                                                               |
 |-------------------|------------------|-----------------------------------------------------------------------|
@@ -117,8 +129,9 @@ meaning all tasks run cooperatively and the firmware reboots if any of them exit
 5. GPIO pin setup and OneWire bus scan for DS18B20 sensors
 6. WiFi driver creation
 7. Shared state construction and Tokio runtime launch
-8. All concurrent tasks start — `poll_sensors` and `run_api_server` block until WiFi is up,
-   `poll_sensors` additionally waits for NTP time sync before beginning measurements
+8. All concurrent tasks start — HTTP, MQTT and ESPHome wait until WiFi is up;
+   `poll_sensors` waits for NTP time sync before beginning measurements. A missing NTP
+   response leaves measurements waiting while the configuration UI remains available.
 
 If no WiFi SSID is stored, or if a one-shot AP boot was requested by the reset button, the device
 starts an open access point named `esp32temp` at `10.42.42.1` for manual configuration. Sensor
@@ -134,8 +147,11 @@ and triggers a reboot.
 ### Configuration Persistence
 
 Configuration (`config.rs`) is serialized with `postcard` (compact binary format) and protected
-with a CRC-32 checksum. It is stored in the ESP32 NVS partition as a raw byte blob (max 256 bytes).
-On boot, if the NVS data is missing or fails CRC validation, defaults are used and saved back.
+with a CRC-32 checksum. Its application serialization buffer is 512 bytes, including the CRC;
+only the actual serialized bytes are stored in NVS. On boot, if the data is missing, corrupt
+or invalid, defaults are used and saved back. Configuration saves reject values that exceed
+the storage buffer, invalid WiFi credentials, invalid static IPv4 settings and MQTT URLs/topics.
+Polling intervals must be 1–86400 seconds, and read retries must be 0–20.
 
 Default WiFi credentials can be injected at build time via environment variables
 `WIFI_SSID` and `WIFI_PASS`.
@@ -153,6 +169,10 @@ instead of bit-banged software delays. During polling (`measure.rs`), sensors ar
 12-bit resolution with configurable retries (default 5) to handle occasional read/CRC
 failures. The local wrapper exists so the native 1-Wire pull-up flag can be enabled
 explicitly.
+
+Each cycle replaces the reading snapshot by sensor ROM and GPIO. A failing sensor or bus
+does not stop other measurements; failed readings become unavailable. The boot inventory
+remains available to HTTP and ESPHome clients during conversion and read retries.
 
 ### HTTP API
 
@@ -173,6 +193,15 @@ The Axum web server (`apiserver.rs`) provides:
 
 Static assets (favicon, JavaScript, CSS) are gzip-compressed by `build.rs` and embedded in the
 binary via `include_bytes!`; handlers return them with `Content-Encoding: gzip`.
+
+The index page includes an **OTA details** panel populated from `OtaDetails` in runtime state.
+It shows the application's ESP-IDF version and rollback build setting, the installed primary
+bootloader's version, ESP-IDF version, build date/time and security version, plus the running,
+next-boot and update-target slot states, capacities and offsets. These details are captured at
+startup; the initial image state is preserved before the existing application-validation call.
+Bootloader rollback support is confirmed only when pending verification was observed at boot;
+otherwise it is unknown, since bootloader metadata does not contain that setting. Missing or
+unreadable bootloader metadata is displayed as unavailable and does not prevent startup.
 
 ### MQTT Publishing
 
@@ -198,20 +227,44 @@ subscriptions. Exposed entities are:
 
 ESPHome API serving is disabled in AP mode.
 
+Frame reads retain partial data across poll timeouts. The API limits clients to four,
+incoming payloads to 4096 bytes, partial frames to 15 seconds, writes to 10 seconds and
+idle clients to 90 seconds. Duplicate ROM addresses advertise one entity, preserving
+existing Home Assistant entity keys.
+
 ### WiFi Management
 
 `wifi.rs` supports station mode with WPA2 Personal, WPA2 Enterprise, or open networks, plus open
 AP mode for initial/manual configuration. Static IP or DHCP can be configured for station mode.
 The device ID is derived from the WiFi MAC address (`esp32temp-XXXXXXXXXXXX`). On initial station
-connection failure (30 s timeout), the device reboots. After connecting, the `stay_connected` loop
-handles reconnection automatically.
+connection failure, the device reboots. Association and IP acquisition have bounded waits;
+IP acquisition allows 30 seconds. Later failures retry after five seconds, resetting a
+station left associated after a DHCP timeout. Every reconnection refreshes cached IP,
+gateway and interface state. Disconnect events increment a generation counter so a
+ping failure cannot reboot a device whose network changed during the check.
 
 ### OTA Firmware Updates
 
 The flash is partitioned with two OTA app slots (each ~2 MB) defined in `partitions.csv`.
 On boot, the running slot is marked valid. A new firmware image can be flashed via
 `POST /fw` with an HTTP URL — it is streamed into the inactive slot using `EspOta`,
-and the device reboots into it. If the new firmware fails, the previous slot remains available.
+and the device reboots into it. The normal application build has rollback disabled;
+the installed bootloader's setting is independent and may be unknown. Startup still
+immediately marks the running slot valid. Automatic health-based fallback is not implemented.
+
+An opt-in diagnostic image can test the installed bootloader's verification transition
+and, after observing support, intentionally withhold confirmation to test actual fallback.
+Build it with `./make_ota_probe_image c3` or `./make_ota_probe_image wroom32`. Follow the
+[controlled rollback test procedure](OTA_ROLLBACK_TEST.md) using OTA only, preserving the
+installed bootloader and the previous normal firmware. Normal builds exclude its test route.
+
+HTTP request bodies are limited to 8 KiB. Firmware downloads have a 30-second HTTP I/O
+timeout and a five-minute transfer deadline (a pending read can take up to the I/O timeout).
+Declared and streamed sizes are checked against the inactive slot, and truncated or invalid
+images fail before activation. Failed updates abort without scheduling a reboot. Successful
+config saves and updates return JSON and schedule a reboot after two seconds. Concurrent
+configuration changes and firmware updates receive HTTP 409 until the operation fails or
+the device restarts. Cancelling an HTTP request does not cancel an active flash operation.
 
 ### Factory Reset
 
@@ -220,3 +273,28 @@ factory reset: default config is written to NVS, any one-shot AP request is clea
 reboots. A short press while running in station mode stores a one-shot AP-mode request and reboots
 for manual configuration. The reset GPIO is `GPIO9` for `esp32-c3` builds and `GPIO0` for
 `esp-wroom-32` builds.
+
+## Validation
+
+Host regression tests cover fragmented ESPHome frames, cancellation and deadlines,
+varint overflow, firmware transfer failures and OTA image-size checks:
+
+```bash
+cargo +stable test --locked --manifest-path tests/host/Cargo.toml --target x86_64-unknown-linux-gnu
+python3 -B -m unittest discover -s tests -p 'test_*.py'
+```
+
+For firmware changes, run `cargo check`, `cargo clippy --all-targets -- -D warnings` and
+`cargo build -r` for C3, then the equivalent commands with `MCU=esp32`, `cargo +esp`,
+`--target xtensa-esp32-espidf --no-default-features --features=esp-wroom-32` for WROOM32.
+
+Hardware validation remains necessary on both targets:
+
+- DHCP and static-IP disconnect/reconnect, IP/gateway refresh and guarded ping recovery.
+- NTP unavailable at boot, followed by recovery and timestamped measurements.
+- Multiple sensors/buses with one sensor disconnected; verify HTTP, MQTT and ESPHome results.
+- AP configuration, short button press, long-press reset and persistent settings after reboot.
+- ESPHome discovery/subscription, stalled clients, and MQTT broker outage/recovery.
+- OTA from existing firmware into each slot, then a second update into the other slot.
+- OTA failures: HTTP 404, interrupted download, oversized image, wrong chip and invalid image;
+  verify the old firmware keeps running and errors reach the browser.

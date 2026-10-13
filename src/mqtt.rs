@@ -34,7 +34,7 @@ pub async fn run_mqtt(state: Arc<Pin<Box<MyState>>>) -> anyhow::Result<()> {
 
     sleep(Duration::from_secs(10)).await;
 
-    info!("MQTT conn: {url} [{myid}]");
+    info!("Initializing MQTT client [{myid}]");
     let (client, conn) = match mqtt::client::EspAsyncMqttClient::new(
         &url,
         &mqtt::client::MqttClientConfiguration {
@@ -52,8 +52,8 @@ pub async fn run_mqtt(state: Arc<Pin<Box<MyState>>>) -> anyhow::Result<()> {
     };
 
     tokio::select! {
-        _ = Box::pin(data_sender(state.clone(), client)) => { error!("data_sender() ended."); }
-        _ = Box::pin(event_loop(state.clone(), conn)) => { error!("event_loop() ended."); }
+        result = Box::pin(data_sender(state.clone(), client)) => { error!("data_sender() ended: {result:?}"); }
+        result = Box::pin(event_loop(state.clone(), conn)) => { error!("event_loop() ended: {result:?}"); }
     };
     Ok(())
 }
@@ -66,7 +66,9 @@ async fn data_sender(
 
     loop {
         sleep(Duration::from_secs(5)).await;
-        let uptime = state.data.read().await.uptime;
+        if !*state.wifi_up.read().await {
+            continue;
+        }
 
         {
             let mut fresh_data = state.fresh_data.write().await;
@@ -76,17 +78,23 @@ async fn data_sender(
             *fresh_data = false;
         }
 
-        {
+        let data = state.data.read().await.clone();
+        let sent = Box::pin(async {
             let mut topic = format!("{mqtt_topic}/uptime");
-            let mut mqtt_data = format!("{{ \"uptime\": {} }}", uptime);
+            let mut mqtt_data = format!("{{ \"uptime\": {} }}", data.uptime);
             Box::pin(mqtt_send(&mut client, &topic, &mqtt_data)).await?;
 
-            let data = state.data.read().await;
             for v in data.temperatures.iter().filter(|v| v.value > NO_TEMP) {
                 topic = format!("{mqtt_topic}/{}", v.sensor);
                 mqtt_data = format!("{{ \"temperature\": {} }}", v.value);
                 Box::pin(mqtt_send(&mut client, &topic, &mqtt_data)).await?;
             }
+            Ok::<_, EspError>(())
+        })
+        .await;
+        if let Err(error) = sent {
+            warn!("MQTT publish failed; retrying the latest sensor snapshot: {error}");
+            *state.fresh_data.write().await = true;
         }
     }
 }

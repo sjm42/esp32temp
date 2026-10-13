@@ -58,7 +58,9 @@ impl Iterator for DeviceSearch<'_, '_> {
 
 impl Drop for DeviceSearch<'_, '_> {
     fn drop(&mut self) {
-        esp!(unsafe { onewire_del_device_iter(self.search) }).unwrap();
+        if let Err(error) = esp!(unsafe { onewire_del_device_iter(self.search) }) {
+            error!("Could not release 1-Wire search iterator: {error}");
+        }
     }
 }
 
@@ -98,7 +100,9 @@ impl<'a> OWDriver<'a> {
     }
 
     pub fn write(&self, data: &[u8]) -> Result<(), EspError> {
-        esp!(unsafe { onewire_bus_write_bytes(self.handle(), data.as_ptr(), data.len() as u8) })?;
+        let len = u8::try_from(data.len())
+            .map_err(|_| EspError::from_infallible::<ESP_ERR_INVALID_SIZE>())?;
+        esp!(unsafe { onewire_bus_write_bytes(self.handle(), data.as_ptr(), len) })?;
         Ok(())
     }
 
@@ -113,7 +117,9 @@ impl<'a> OWDriver<'a> {
 
 impl Drop for OWDriver<'_> {
     fn drop(&mut self) {
-        esp!(unsafe { onewire_bus_del(self.handle()) }).unwrap();
+        if let Err(error) = esp!(unsafe { onewire_bus_del(self.handle()) }) {
+            error!("Could not release 1-Wire bus: {error}");
+        }
     }
 }
 

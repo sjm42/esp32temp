@@ -2,6 +2,7 @@
 
 #![warn(clippy::large_futures)]
 
+use anyhow::Context;
 use esp_idf_svc::{
     eventloop::EspSystemEventLoop, hal::gpio, ota::EspOta, ping, timer::EspTaskTimerService,
 };
@@ -17,10 +18,19 @@ const BUTTON_COUNTDOWN_STEP_MS: u64 = 500;
 // use esp_idf_sys::esp_app_desc;
 // esp_app_desc!();
 
-fn main() -> anyhow::Result<()> {
+fn main() {
     esp_idf_sys::link_patches();
     esp_idf_svc::log::EspLogger::initialize_default();
 
+    if let Err(error) = run() {
+        error!("Fatal application error: {error:#}");
+    }
+    info!("Application stopped, rebooting...");
+    FreeRtos::delay_ms(3000);
+    esp_idf_hal::reset::restart();
+}
+
+fn run() -> anyhow::Result<()> {
     // eventfd is needed by our mio poll implementation.  Note you should set max_fds
     // higher if you have other code that may need eventfd.
 
@@ -36,28 +46,33 @@ fn main() -> anyhow::Result<()> {
     // this means that the code size is not 32bit aligned
     // and any small change to the code will likely fix it.
     info!("Hello.");
-    info!("Starting up, firmare version {}", FW_VERSION);
-    let ota_slot = {
+    info!("Starting up, firmware version {}", FW_VERSION);
+    // The probe needs its one-shot failure request before application validation.
+    #[cfg(feature = "ota-rollback-probe")]
+    let nvs_default_partition = nvs::EspDefaultNvsPartition::take()?;
+    #[cfg(feature = "ota-rollback-probe")]
+    let mut nvs = nvs::EspNvs::new(nvs_default_partition.clone(), env!("CARGO_BIN_NAME"), true)?;
+    let ota_details = {
         let mut ota = EspOta::new()?;
-        let running_slot = ota.get_running_slot()?;
+        let mut details = OtaDetails::capture();
+        #[cfg(feature = "ota-rollback-probe")]
+        ota_probe::on_boot(&mut details, &mut nvs)?;
         ota.mark_running_slot_valid()?;
-        let ota_slot = format!("{} ({:?})", running_slot.label, running_slot.state);
-        info!("OTA slot: {ota_slot}");
-        ota_slot
+        details.refresh_slots();
+        info!("OTA details: {details:#?}");
+        details
     };
 
     let sysloop = EspSystemEventLoop::take()?;
     let timer = EspTaskTimerService::new()?;
+    #[cfg(not(feature = "ota-rollback-probe"))]
     let nvs_default_partition = nvs::EspDefaultNvsPartition::take()?;
 
     let ns = env!("CARGO_BIN_NAME");
-    let mut nvs = match nvs::EspNvs::new(nvs_default_partition.clone(), ns, true) {
-        Ok(nvs) => {
-            info!("Got namespace {ns:?} from default partition");
-            nvs
-        }
-        Err(e) => panic!("Could not get namespace {ns}: {e:?}"),
-    };
+    #[cfg(not(feature = "ota-rollback-probe"))]
+    let mut nvs = nvs::EspNvs::new(nvs_default_partition.clone(), ns, true)
+        .with_context(|| format!("Could not get NVS namespace {ns}"))?;
+    info!("Got namespace {ns:?} from default partition");
     let mut ap_mode = matches!(nvs.get_u8(AP_MODE_NVS_KEY)?, Some(1));
     if ap_mode {
         info!("One-shot AP mode requested for this boot.");
@@ -88,9 +103,10 @@ fn main() -> anyhow::Result<()> {
         ap_mode = true;
         info!("No WiFi configuration stored, starting in AP mode.");
     }
-    info!("My config:\n{config:#?}");
+    config.validate().context("Invalid stored configuration")?;
+    info!("Configuration loaded (AP mode: {ap_mode})");
 
-    let peripherals = Peripherals::take().unwrap();
+    let peripherals = Peripherals::take().context("Could not take peripherals")?;
     let pins = peripherals.pins;
     #[cfg(feature = "esp32-c3")]
     let button = gpio::PinDriver::input(pins.gpio9.degrade_input(), Pull::Up)?;
@@ -169,13 +185,15 @@ fn main() -> anyhow::Result<()> {
 
     // populate the temp_data structure
     let mut temp_data = TempValues::with_capacity(n_sensors);
-    (0..n_sensors).for_each(|_| {
-        temp_data.temperatures.push(TempData {
-            iopin: "N/A".into(),
-            sensor: "N/A".into(),
-            value: NO_TEMP,
-        });
-    });
+    for onewire in &onewire_pins {
+        for device in &onewire.ids {
+            temp_data.temperatures.push(TempData {
+                iopin: onewire.name.clone(),
+                sensor: format_device_id(device),
+                value: NO_TEMP,
+            });
+        }
+    }
 
     let wifidriver = WifiDriver::new(
         peripherals.modem,
@@ -187,7 +205,7 @@ fn main() -> anyhow::Result<()> {
         ap_mode,
         config,
         nvs,
-        ota_slot,
+        ota_details,
         onewire_pins,
         temp_data,
         led,
@@ -196,30 +214,29 @@ fn main() -> anyhow::Result<()> {
 
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
+        // OTA downloads and gateway pings use one bounded blocking worker.
+        .max_blocking_threads(1)
+        .thread_stack_size(20480)
         .build()?
         .block_on(Box::pin(async move {
             shared_state.led_off().await.ok();
             let wifi_loop = WifiLoop {
                 state: shared_state.clone(),
-                wifi: None,
             };
 
             info!("Entering main loop...");
             tokio::select! {
-                _ = Box::pin(poll_reset(shared_state.clone(), button)) => { error!("poll_reset() ended."); }
-                _ = Box::pin(poll_sensors(shared_state.clone())) => { error!("poll_sensors() ended."); }
-                _ = Box::pin(run_mqtt(shared_state.clone())) => { error!("run_mqtt() ended."); }
-                _ = Box::pin(run_api_server(shared_state.clone())) => { error!("run_api_server() ended."); }
-                _ = Box::pin(run_esphome_api(shared_state.clone())) => { error!("run_esphome_api() ended."); }
-                _ = Box::pin(wifi_loop.run(wifidriver, sysloop, timer)) => { error!("wifi_loop.run() ended."); }
-                _ = Box::pin(pinger(shared_state.clone())) => { error!("pinger() ended."); }
+                result = Box::pin(poll_reset(shared_state.clone(), button)) => { error!("poll_reset() ended: {result:?}"); }
+                result = Box::pin(poll_sensors(shared_state.clone())) => { error!("poll_sensors() ended: {result:?}"); }
+                result = Box::pin(run_mqtt(shared_state.clone())) => { error!("run_mqtt() ended: {result:?}"); }
+                result = Box::pin(run_api_server(shared_state.clone())) => { error!("run_api_server() ended: {result:?}"); }
+                result = Box::pin(run_esphome_api(shared_state.clone())) => { error!("run_esphome_api() ended: {result:?}"); }
+                result = Box::pin(wifi_loop.run(wifidriver, sysloop, timer)) => { error!("wifi_loop.run() ended: {result:?}"); }
+                result = Box::pin(pinger(shared_state.clone())) => { error!("pinger() ended: {result:?}"); }
             };
         }));
 
-    // not actually returning from main() but we reboot instead
-    info!("main() finished, reboot.");
-    FreeRtos::delay_ms(3000);
-    esp_idf_hal::reset::restart();
+    Ok(())
 }
 
 async fn poll_reset(
@@ -306,7 +323,12 @@ async fn pinger(state: Arc<Pin<Box<MyState>>>) -> anyhow::Result<()> {
     loop {
         sleep(Duration::from_secs(300)).await;
 
-        if let Some(ping_ip) = *state.ping_ip.read().await {
+        if !*state.wifi_up.read().await {
+            continue;
+        }
+        let generation = state.wifi_generation.load(Ordering::Relaxed);
+        let ping_ip = *state.ping_ip.read().await;
+        if let Some(ping_ip) = ping_ip {
             let if_idx = *state.if_index.read().await;
             if if_idx > 0 {
                 info!("Starting ping {ping_ip} (if_idx {if_idx})");
@@ -317,16 +339,27 @@ async fn pinger(state: Arc<Pin<Box<MyState>>>) -> anyhow::Result<()> {
                     data_size: 64,
                     tos: 0,
                 };
-                let mut ping = ping::EspPing::new(if_idx);
-                let res = ping.ping(ping_ip, &conf)?;
+                let res = tokio::task::spawn_blocking(move || {
+                    ping::EspPing::new(if_idx).ping(ping_ip, &conf)
+                })
+                .await
+                .context("Gateway ping worker failed")?;
                 info!("Pinger result: {res:?}");
-                if res.received == 0 {
-                    error!("Ping failed, rebooting.");
+                if !matches!(res, Ok(ref summary) if summary.received > 0) {
                     sleep(Duration::from_millis(2000)).await;
+                    if !*state.wifi_up.read().await
+                        || state.wifi_generation.load(Ordering::Relaxed) != generation
+                        || *state.ping_ip.read().await != Some(ping_ip)
+                        || *state.if_index.read().await != if_idx
+                    {
+                        info!("Network changed during ping; leaving recovery to WiFi.");
+                        continue;
+                    }
+                    error!("Ping failed on unchanged connection, rebooting.");
                     esp_idf_hal::reset::restart();
                 }
             } else {
-                error!("No if_index. wat?");
+                warn!("No network interface available for gateway ping");
             }
         }
     }

@@ -1,6 +1,7 @@
 #!/bin/sh
 set -e
 set -x
-MCU=esp32 cargo build -r --target xtensa-esp32-espidf --no-default-features --features=esp-wroom-32
+MCU=esp32 cargo +esp build -r --target xtensa-esp32-espidf --no-default-features --features=esp-wroom-32
 espflash save-image --chip esp32 --partition-table ./partitions.csv ./target/xtensa-esp32-espidf/release/esp32temp firmware-wroom32.bin
+python3 ./check_ota_size.py firmware-wroom32.bin ./partitions.csv
 # EOF

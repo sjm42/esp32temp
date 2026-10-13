@@ -1,10 +1,12 @@
 // config.rs
 
+use anyhow::{Context, ensure};
 use crc::{CRC_32_ISCSI, Crc};
 
 use crate::*;
 
-pub const NVS_BUF_SIZE: usize = 256;
+// Serialized configuration limit, including the CRC; not an NVS partition limit.
+pub const NVS_BUF_SIZE: usize = 512;
 pub const HTTP_API_PORT: u16 = 80;
 const DEFAULT_SENSOR_RETRIES: u32 = 5;
 const DEFAULT_POLL_DELAY: u64 = 60;
@@ -62,6 +64,93 @@ impl Default for MyConfig {
 }
 
 impl MyConfig {
+    pub fn validate(&self) -> anyhow::Result<()> {
+        ensure!(
+            (1..=86400).contains(&self.delay),
+            "Sensor poll interval must be between 1 and 86400 seconds"
+        );
+        ensure!(self.retries <= 20, "Sensor read retries must be at most 20");
+        ensure!(
+            self.wifi_ssid.len() <= 32,
+            "WiFi SSID must be at most 32 bytes"
+        );
+        ensure!(
+            !self.wifi_ssid.contains('\0'),
+            "WiFi SSID must not contain NUL"
+        );
+        ensure!(
+            !self.wifi_pass.contains('\0'),
+            "WiFi password must not contain NUL"
+        );
+        if self.has_wifi_config() {
+            if self.wifi_wpa2ent {
+                ensure!(
+                    (1..=127).contains(&self.wifi_username.len()),
+                    "Enterprise username must be between 1 and 127 bytes"
+                );
+                ensure!(
+                    !self.wifi_username.contains('\0'),
+                    "Enterprise username must not contain NUL"
+                );
+                ensure!(
+                    !self.wifi_pass.is_empty(),
+                    "Enterprise password must not be empty"
+                );
+            } else if !self.wifi_pass.is_empty() {
+                ensure!(
+                    (8..=63).contains(&self.wifi_pass.len())
+                        || (self.wifi_pass.len() == 64
+                            && self.wifi_pass.bytes().all(|byte| byte.is_ascii_hexdigit())),
+                    "WiFi password must be 8–63 bytes or a 64-digit hexadecimal key"
+                );
+            }
+        }
+        if !self.v4dhcp {
+            ensure!(
+                (1..=30).contains(&self.v4mask),
+                "Static IPv4 mask must be between 1 and 30"
+            );
+            ensure!(
+                !self.v4addr.is_unspecified() && !self.v4addr.is_multicast(),
+                "Static IPv4 address must be a unicast address"
+            );
+            ensure!(
+                !self.v4gw.is_unspecified() && !self.v4gw.is_multicast(),
+                "Static IPv4 gateway must be a unicast address"
+            );
+        }
+        if self.mqtt_enable {
+            ensure!(
+                self.mqtt_url.starts_with("mqtt://") || self.mqtt_url.starts_with("mqtts://"),
+                "MQTT URL must start with mqtt:// or mqtts://"
+            );
+            ensure!(
+                !self.mqtt_url.contains('\0'),
+                "MQTT URL must not contain NUL"
+            );
+            let uri = self
+                .mqtt_url
+                .parse::<axum::http::Uri>()
+                .context("Invalid MQTT URL")?;
+            ensure!(uri.authority().is_some(), "MQTT URL must include a host");
+            ensure!(
+                !self.mqtt_topic.is_empty() && !self.mqtt_topic.contains(['#', '+', '\0']),
+                "MQTT topic prefix must be nonempty and contain no wildcards or NUL"
+            );
+        }
+        let mut buffer = [0_u8; NVS_BUF_SIZE];
+        self.encode(&mut buffer)?;
+        Ok(())
+    }
+
+    fn encode<'a>(&self, buffer: &'a mut [u8]) -> anyhow::Result<&'a [u8]> {
+        let crc = Crc::<u32>::new(&CRC_32_ISCSI);
+        let digest = crc.digest();
+        postcard::to_slice_crc32(self, buffer, digest)
+            .map(|bytes| &*bytes)
+            .context("Configuration exceeds the 512-byte storage limit")
+    }
+
     pub fn has_wifi_config(&self) -> bool {
         !self.wifi_ssid.trim().is_empty()
     }
@@ -86,6 +175,10 @@ impl MyConfig {
         let digest = crc.digest();
         match postcard::from_bytes_crc32::<MyConfig>(b, digest) {
             Ok(c) => {
+                if let Err(error) = c.validate() {
+                    error!("Invalid stored configuration: {error:#}");
+                    return None;
+                }
                 info!("Successfully parsed config from nvs.");
                 Some(c)
             }
@@ -97,16 +190,9 @@ impl MyConfig {
     }
 
     pub fn to_nvs(&self, nvs: &mut nvs::EspNvs<nvs::NvsDefault>) -> anyhow::Result<()> {
+        self.validate()?;
         let mut nvsbuf = [0u8; NVS_BUF_SIZE];
-        let crc = Crc::<u32>::new(&CRC_32_ISCSI);
-        let digest = crc.digest();
-        let nvsdata = match postcard::to_slice_crc32(self, &mut nvsbuf, digest) {
-            Ok(d) => d,
-            Err(e) => {
-                let estr = format!("Cannot encode config to buffer {e:?}");
-                bail!("{estr}");
-            }
-        };
+        let nvsdata = self.encode(&mut nvsbuf)?;
         info!(
             "Encoded config to {sz} bytes. Saving to nvs...",
             sz = nvsdata.len()

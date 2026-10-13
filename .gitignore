@@ -1,4 +1,5 @@
 /.embuild
 /target
+/tests/host/target
 /env.sh
 /*.bin

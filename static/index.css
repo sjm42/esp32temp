@@ -207,6 +207,63 @@ input[id="firmware"] {
   font-weight: 700;
 }
 
+.ota-details-grid,
+.ota-slot-list {
+  display: grid;
+  gap: 16px;
+}
+
+.ota-details-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.ota-slot-list {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 16px 0 12px;
+}
+
+.ota-details-grid h3,
+.ota-slot h3 {
+  margin: 0 0 8px;
+  font-size: 0.95rem;
+  color: #19313a;
+}
+
+.ota-details-list {
+  display: grid;
+  grid-template-columns: minmax(110px, 1fr) minmax(0, 1.3fr);
+  gap: 6px 12px;
+  margin: 0;
+  font-size: 0.93rem;
+}
+
+.ota-details-list dt {
+  color: var(--muted);
+}
+
+.ota-details-list dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.ota-slot {
+  padding: 12px;
+  border: 1px solid rgba(20, 120, 105, 0.18);
+  border-radius: 10px;
+  background: rgba(20, 120, 105, 0.07);
+  overflow-wrap: anywhere;
+}
+
+.ota-slot p,
+.ota-note {
+  font-size: 0.88rem;
+}
+
+.ota-state {
+  margin-left: 6px;
+  color: var(--text);
+}
+
 @media (max-width: 700px) {
   body {
     padding: 14px 8px;
@@ -214,6 +271,11 @@ input[id="firmware"] {
 
   .panel {
     padding: 14px 12px;
+  }
+
+  .ota-details-grid,
+  .ota-slot-list {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   form[name="esp32cfg"] table,

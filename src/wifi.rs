@@ -8,30 +8,43 @@ use esp_idf_svc::{
     ipv4,
     netif::{self, EspNetif},
     timer::{EspTimerService, Task},
-    wifi::{AsyncWifi, EspWifi, WifiDriver},
+    wifi::{AsyncWifi, EspWifi, WifiDriver, WifiEvent},
 };
 
 use crate::*;
 
-pub struct WifiLoop<'a> {
+pub struct WifiLoop {
     pub state: Arc<std::pin::Pin<Box<MyState>>>,
-    pub wifi: Option<AsyncWifi<EspWifi<'a>>>,
 }
 
-impl<'a> WifiLoop<'a> {
+impl WifiLoop {
     pub async fn run(
-        mut self,
+        self,
         wifidriver: WifiDriver<'_>,
         sysloop: EspEventLoop<System>,
         timer: EspTimerService<Task>,
     ) -> anyhow::Result<()> {
         info!("Initializing Wi-Fi...");
 
+        let event_state = self.state.clone();
+        let _disconnect_sub = sysloop.subscribe::<WifiEvent, _>(move |event| {
+            if let WifiEvent::StaDisconnected(d) = event {
+                event_state.wifi_generation.fetch_add(1, Ordering::Relaxed);
+                warn!("WiFi disconnected: reason={} rssi={}", d.reason(), d.rssi());
+            }
+        })?;
+
         let net_if = if self.state.ap_mode {
             EspNetif::new_with_conf(&netif::NetifConfiguration::wifi_default_client())?
         } else {
             let ipv4_config = if self.state.config.v4dhcp {
-                ipv4::ClientConfiguration::DHCP(ipv4::DHCPClientSettings::default())
+                ipv4::ClientConfiguration::DHCP(ipv4::DHCPClientSettings {
+                    hostname: Some(
+                        "esp32temp"
+                            .try_into()
+                            .map_err(|e| anyhow::anyhow!("Invalid hostname: {e:?}"))?,
+                    ),
+                })
             } else {
                 ipv4::ClientConfiguration::Fixed(ipv4::ClientSettings {
                     ip: self.state.config.v4addr,
@@ -73,37 +86,28 @@ impl<'a> WifiLoop<'a> {
         })?;
 
         let espwifi = EspWifi::wrap_all(wifidriver, net_if, ap_netif)?;
-        self.wifi = Some(AsyncWifi::wrap(espwifi, sysloop, timer.clone())?);
+        let mut wifi = AsyncWifi::wrap(espwifi, sysloop, timer)?;
 
         if self.state.ap_mode {
-            return Box::pin(self.run_ap_mode()).await;
+            return Box::pin(self.run_ap_mode(&mut wifi)).await;
         }
 
-        Box::pin(self.configure()).await?;
+        Box::pin(self.configure(&mut wifi)).await?;
 
-        if let Err(e) = Box::pin(self.initial_connect()).await {
+        if let Err(e) = Box::pin(self.do_connect_loop(&mut wifi, true)).await {
             error!("WiFi connection failed: {e:?}");
             error!("Resetting...");
             sleep(Duration::from_secs(5)).await;
             esp_idf_hal::reset::restart();
         }
 
-        sleep(Duration::from_secs(5)).await;
-
-        let netif = self.wifi.as_ref().unwrap().wifi().sta_netif();
-        let ip_info = netif.get_ip_info()?;
-        *self.state.if_index.write().await = netif.get_index();
-        *self.state.ip_addr.write().await = ip_info.ip;
-        *self.state.ping_ip.write().await = Some(ip_info.subnet.gateway);
-        *self.state.wifi_up.write().await = true;
-
-        Box::pin(self.stay_connected()).await
+        Box::pin(self.do_connect_loop(&mut wifi, false)).await
     }
 
-    async fn run_ap_mode(&mut self) -> anyhow::Result<()> {
-        Box::pin(self.configure_ap()).await?;
+    async fn run_ap_mode(&self, wifi: &mut AsyncWifi<EspWifi<'_>>) -> anyhow::Result<()> {
+        Box::pin(self.configure_ap(wifi)).await?;
 
-        let netif = self.wifi.as_ref().unwrap().wifi().ap_netif();
+        let netif = wifi.wifi().ap_netif();
         let ip_info = netif.get_ip_info()?;
         *self.state.if_index.write().await = netif.get_index();
         *self.state.ip_addr.write().await = ip_info.ip;
@@ -121,11 +125,12 @@ impl<'a> WifiLoop<'a> {
         }
     }
 
-    async fn configure_ap(&mut self) -> anyhow::Result<()> {
+    async fn configure_ap(&self, wifi: &mut AsyncWifi<EspWifi<'_>>) -> anyhow::Result<()> {
         info!("WiFi starting access point mode...");
-        let wifi = self.wifi.as_mut().unwrap();
         let ap_cfg = AccessPointConfiguration {
-            ssid: AP_MODE_SSID.try_into().unwrap(),
+            ssid: AP_MODE_SSID
+                .try_into()
+                .map_err(|e| anyhow::anyhow!("Invalid AP SSID: {e:?}"))?,
             auth_method: AuthMethod::None,
             max_connections: 4,
             ..Default::default()
@@ -140,24 +145,34 @@ impl<'a> WifiLoop<'a> {
         Ok(())
     }
 
-    pub async fn configure(&mut self) -> anyhow::Result<()> {
+    async fn configure(&self, wifi: &mut AsyncWifi<EspWifi<'_>>) -> anyhow::Result<()> {
         info!("WiFi setting credentials...");
-        let wifi = self.wifi.as_mut().unwrap();
         let config = &self.state.config;
         let mut client_cfg = ClientConfiguration {
-            ssid: config.wifi_ssid.as_str().try_into().unwrap(),
+            ssid: config
+                .wifi_ssid
+                .as_str()
+                .try_into()
+                .map_err(|e| anyhow::anyhow!("Invalid WiFi SSID: {e:?}"))?,
             ..Default::default()
         };
-        if config.wifi_pass.is_empty() {
+        if config.wifi_wpa2ent {
+            client_cfg.auth_method = AuthMethod::WPA2Enterprise;
+        } else if config.wifi_pass.is_empty() {
             client_cfg.auth_method = AuthMethod::None;
         } else {
             client_cfg.auth_method = AuthMethod::WPA2Personal;
-            client_cfg.password = config.wifi_pass.as_str().try_into().unwrap();
+            client_cfg.password = config
+                .wifi_pass
+                .as_str()
+                .try_into()
+                .map_err(|e| anyhow::anyhow!("Invalid WiFi password: {e:?}"))?;
         }
         if config.wifi_wpa2ent {
-            client_cfg.auth_method = AuthMethod::WPA2Enterprise;
-            let username = config.wifi_username.as_str();
-            let password = config.wifi_pass.as_str();
+            let username = config.wifi_username.as_bytes();
+            let password = config.wifi_pass.as_bytes();
+            let username_len = i32::try_from(username.len())?;
+            let password_len = i32::try_from(password.len())?;
             unsafe {
                 esp_idf_sys::esp_eap_client_clear_ca_cert();
                 esp_idf_sys::esp_eap_client_clear_certificate_and_key();
@@ -165,26 +180,37 @@ impl<'a> WifiLoop<'a> {
                 esp_idf_sys::esp_eap_client_clear_username();
                 esp_idf_sys::esp_eap_client_clear_password();
                 esp_idf_sys::esp_eap_client_clear_new_password();
-                // let ret1 = esp_idf_sys::esp_eap_client_set_username(username.as_ptr(), username.len() as i32);
-                let ret1 = esp_idf_sys::esp_eap_client_set_identity(
+                esp_idf_sys::esp!(esp_idf_sys::esp_eap_client_set_identity(
                     username.as_ptr(),
-                    username.len() as i32,
-                );
-                let ret2 = esp_idf_sys::esp_eap_client_set_username(
+                    username_len
+                ))?;
+                esp_idf_sys::esp!(esp_idf_sys::esp_eap_client_set_username(
                     username.as_ptr(),
-                    username.len() as i32,
-                );
-                let ret3 = esp_idf_sys::esp_eap_client_set_password(
+                    username_len
+                ))?;
+                esp_idf_sys::esp!(esp_idf_sys::esp_eap_client_set_password(
                     password.as_ptr(),
-                    password.len() as i32,
-                );
-                // let ret4 = esp_idf_sys::esp_eap_client_set_new_password(password.as_ptr(), password.len() as i32);
-                let ret4 = esp_idf_sys::esp_wifi_sta_enterprise_enable();
-
-                info!("WiFi WPA2 Enterprise: {ret1}:{ret2}:{ret3}:{ret4}");
+                    password_len
+                ))?;
+                esp_idf_sys::esp!(esp_idf_sys::esp_wifi_sta_enterprise_enable())?;
             }
+            info!("WiFi WPA2 Enterprise credentials configured");
         }
         wifi.set_configuration(&Configuration::Client(client_cfg))?;
+
+        // Match the sibling project's PMF capability for WPA2/WPA3 mixed-mode APs.
+        unsafe {
+            let mut cfg: esp_idf_sys::wifi_config_t = core::mem::zeroed();
+            esp_idf_sys::esp!(esp_idf_sys::esp_wifi_get_config(
+                esp_idf_sys::wifi_interface_t_WIFI_IF_STA,
+                &mut cfg
+            ))?;
+            cfg.sta.pmf_cfg.capable = true;
+            esp_idf_sys::esp!(esp_idf_sys::esp_wifi_set_config(
+                esp_idf_sys::wifi_interface_t_WIFI_IF_STA,
+                &mut cfg
+            ))?;
+        }
 
         info!("WiFi driver starting...");
         Box::pin(wifi.start()).await?;
@@ -197,52 +223,55 @@ impl<'a> WifiLoop<'a> {
         Ok(())
     }
 
-    pub async fn initial_connect(&mut self) -> anyhow::Result<()> {
-        self.do_connect_loop(true).await
-    }
-
-    pub async fn stay_connected(mut self) -> anyhow::Result<()> {
-        self.do_connect_loop(false).await
-    }
-
-    async fn do_connect_loop(&mut self, initial: bool) -> anyhow::Result<()> {
-        let wifi = self.wifi.as_mut().unwrap();
+    async fn do_connect_loop(
+        &self,
+        wifi: &mut AsyncWifi<EspWifi<'_>>,
+        initial: bool,
+    ) -> anyhow::Result<()> {
         loop {
-            // Wait for disconnect before trying to connect again.  This loop ensures
-            // we stay connected and is commonly missing from trivial examples as it's
-            // way too difficult to showcase the core logic of an example and have
-            // a proper Wi-Fi event loop without a robust async runtime.  Fortunately, we can do it
-            // now!
-            let timeout = if initial {
-                Some(Duration::from_secs(30))
-            } else {
-                None
-            };
-            Box::pin(wifi.wifi_wait(|w| w.is_up(), timeout)).await.ok();
+            // Link events wake this wait promptly on disconnection (before IP-loss timeout).
+            Box::pin(wifi.wifi_wait(|w| w.is_connected(), None)).await?;
+            *self.state.wifi_up.write().await = false;
+            *self.state.ping_ip.write().await = None;
+            *self.state.ip_addr.write().await = net::Ipv4Addr::UNSPECIFIED;
+            *self.state.if_index.write().await = 0;
 
             info!("WiFi connecting...");
-            Box::pin(wifi.connect()).await.ok();
-
-            info!("WiFi waiting for association...");
-            match Box::pin(wifi.ip_wait_while(|w| w.is_up().map(|s| !s), None)).await {
-                Ok(_) => {}
-                Err(e) => {
-                    error!("WiFi error: {e:?}");
-
-                    // only exit here if this is initial connection
-                    // otherwise, keep trying
-                    if initial {
-                        bail!(e);
-                    }
+            let connected = Box::pin(async {
+                Box::pin(wifi.connect()).await?;
+                info!("WiFi waiting for IP...");
+                Box::pin(
+                    wifi.ip_wait_while(|w| w.is_up().map(|up| !up), Some(Duration::from_secs(30))),
+                )
+                .await
+            })
+            .await;
+            if let Err(e) = connected {
+                warn!("WiFi connection failed: {e:?}");
+                if initial {
+                    return Err(e.into());
                 }
+                // A DHCP timeout can leave the station associated; reset it before retrying.
+                Box::pin(wifi.disconnect()).await?;
+                sleep(Duration::from_secs(5)).await;
+                continue;
             }
 
-            info!("WiFi connected.");
+            let netif = wifi.wifi().sta_netif();
+            let ip_info = netif.get_ip_info()?;
+            *self.state.if_index.write().await = netif.get_index();
+            *self.state.ip_addr.write().await = ip_info.ip;
+            *self.state.ping_ip.write().await = Some(ip_info.subnet.gateway);
+            self.state.wifi_generation.fetch_add(1, Ordering::Relaxed);
+            *self.state.wifi_up.write().await = true;
+            info!(
+                "WiFi connected: {} (gateway {})",
+                ip_info.ip, ip_info.subnet.gateway
+            );
             if initial {
                 return Ok(());
             }
         }
     }
 }
-
 // EOF

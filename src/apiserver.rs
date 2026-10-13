@@ -1,22 +1,112 @@
 // apiserver.rs
 
+use anyhow::Context;
 use axum::{
     Json, Router,
     body::Body,
-    extract::{Form, State},
+    extract::{
+        DefaultBodyLimit, Form, State,
+        rejection::{FormRejection, JsonRejection},
+    },
     http::{Response, StatusCode, header},
     response::{Html, IntoResponse},
     routing::*,
 };
-pub use axum_macros::debug_handler;
 use embedded_svc::http::client::Client as HttpClient;
 use esp_idf_svc::{
     http::client::{Configuration as HttpConfiguration, EspHttpConnection},
-    io,
     ota::EspOta,
 };
 
+use crate::ota_transfer::{TransferError, copy_firmware};
 use crate::*;
+
+const HTTP_BODY_LIMIT: usize = 8 * 1024;
+const REBOOT_DELAY: Duration = Duration::from_secs(2);
+const OTA_TRANSFER_TIMEOUT: Duration = Duration::from_secs(300);
+
+#[derive(Debug, thiserror::Error)]
+enum ApiError {
+    #[error("{0}")]
+    BadRequest(String),
+    #[error("{0}")]
+    BadGateway(String),
+    #[error("A configuration change or firmware update is already pending")]
+    Conflict,
+    #[error(transparent)]
+    Internal(#[from] anyhow::Error),
+}
+
+impl IntoResponse for ApiError {
+    fn into_response(self) -> Response<Body> {
+        error!("HTTP handler failed: {self:#}");
+        let (status, message) = match self {
+            Self::BadRequest(message) => (StatusCode::BAD_REQUEST, message),
+            Self::BadGateway(message) => (StatusCode::BAD_GATEWAY, message),
+            Self::Conflict => (StatusCode::CONFLICT, self.to_string()),
+            Self::Internal(_) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Internal server error".into(),
+            ),
+        };
+        json_error(status, message)
+    }
+}
+
+// Own this guard inside the blocking OTA worker, so a disconnected browser cannot
+// release it while flash writes are still in progress.
+struct MaintenanceGuard {
+    state: Arc<Pin<Box<MyState>>>,
+    release_on_drop: bool,
+}
+
+impl MaintenanceGuard {
+    fn acquire(state: Arc<Pin<Box<MyState>>>) -> Result<Self, ApiError> {
+        state
+            .maintenance_pending
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .map_err(|_| ApiError::Conflict)?;
+        Ok(Self {
+            state,
+            release_on_drop: true,
+        })
+    }
+
+    fn reboot(mut self) {
+        self.release_on_drop = false;
+        let state = self.state.clone();
+        tokio::spawn(async move {
+            sleep(REBOOT_DELAY).await;
+            *state.reset.write().await = true;
+        });
+    }
+}
+
+impl Drop for MaintenanceGuard {
+    fn drop(&mut self) {
+        if self.release_on_drop {
+            self.state
+                .maintenance_pending
+                .store(false, Ordering::Release);
+        }
+    }
+}
+
+fn json_ok(message: &str) -> Response<Body> {
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({"ok": true, "message": message})),
+    )
+        .into_response()
+}
+
+fn json_error(status: StatusCode, message: impl Into<String>) -> Response<Body> {
+    (
+        status,
+        Json(serde_json::json!({"ok": false, "message": message.into()})),
+    )
+        .into_response()
+}
 
 macro_rules! static_handler {
     ($fn_name:ident, $path:literal, $content_type:literal, $bytes:expr) => {
@@ -79,13 +169,38 @@ pub async fn run_api_server(state: Arc<Pin<Box<MyState>>>) -> anyhow::Result<()>
             get(get_config).post(post_config).options(options),
         )
         .route("/reset_config", get(reset_config))
-        .route("/fw", post(update_fw).options(options))
+        .route("/fw", post(update_fw).options(options));
+    #[cfg(feature = "ota-rollback-probe")]
+    let app = app.route("/ota-test/rollback", post(test_ota_fallback));
+    let app = app
+        .layer(DefaultBodyLimit::max(HTTP_BODY_LIMIT))
         .with_state(state);
     // .layer(TraceLayer::new_for_http());
 
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     info!("API server listening to {listen}");
     Ok(axum::serve(listener, app.into_make_service()).await?)
+}
+
+#[cfg(feature = "ota-rollback-probe")]
+async fn test_ota_fallback(
+    State(state): State<Arc<Pin<Box<MyState>>>>,
+) -> Result<Response<Body>, ApiError> {
+    let operation = MaintenanceGuard::acquire(state)?;
+    tokio::task::spawn_blocking(move || {
+        let _ota = EspOta::new().context("Could not acquire OTA service")?;
+        let mut nvs = operation.state.nvs.blocking_write();
+        ota_probe::request_fallback(&operation.state.ota_details, &mut nvs)
+            .map_err(|error| ApiError::BadRequest(format!("Fallback test refused: {error:#}")))?;
+        drop(nvs);
+        operation.reboot();
+        Ok::<_, ApiError>(())
+    })
+    .await
+    .context("Fallback test worker failed")??;
+    Ok(json_ok(
+        "Fallback test armed; restarting twice to return to previous firmware",
+    ))
 }
 
 pub async fn options(State(state): State<Arc<Pin<Box<MyState>>>>) -> Response<Body> {
@@ -107,12 +222,15 @@ pub async fn get_index(State(state): State<Arc<Pin<Box<MyState>>>>) -> Response<
     let cnt = state.api_cnt.fetch_add(1, Ordering::Relaxed);
     info!("#{cnt} get_index()");
 
-    let value_tuple: (&str, &dyn Any) = ("ota_slot", &state.ota_slot.clone());
-    let index = match state.config.clone().render_with_values(&value_tuple) {
+    let value_tuple: (&str, &dyn Any) = ("ota_details", &state.ota_details);
+    let index = match state.config.render_with_values(&value_tuple) {
         Err(e) => {
             let err_msg = format!("Index template error: {e:?}\n");
             error!("{err_msg}");
-            return (StatusCode::INTERNAL_SERVER_ERROR, err_msg).into_response();
+            return json_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Could not render index page",
+            );
         }
         Ok(s) => s,
     };
@@ -136,18 +254,8 @@ pub async fn get_sensors(
     let cnt = state.api_cnt.fetch_add(1, Ordering::Relaxed);
     info!("#{cnt} get_sensors()");
 
-    let sensors = {
-        let onewires = state.sensors.read().await;
-        let sensors = onewires
-            .iter()
-            .flat_map(|onew| {
-                onew.ids.iter().map(|id| Sensor {
-                    iopin: onew.name.clone(),
-                    sensor: format_device_id(id),
-                })
-            })
-            .collect::<Vec<Sensor>>();
-        SensorValues { sensors }
+    let sensors = SensorValues {
+        sensors: state.sensor_inventory.clone(),
     };
 
     (StatusCode::OK, Json(sensors))
@@ -189,16 +297,15 @@ pub async fn get_config(
 
 pub async fn post_config(
     State(state): State<Arc<Pin<Box<MyState>>>>,
-    Json(mut config): Json<MyConfig>,
-) -> (StatusCode, String) {
+    config: Result<Json<MyConfig>, JsonRejection>,
+) -> Response<Body> {
     let cnt = state.api_cnt.fetch_add(1, Ordering::Relaxed);
     info!("#{cnt} set_conf()");
 
-    if config.v4mask > 30 {
-        let msg = "IPv4 mask error: bits must be between 0..30";
-        error!("{}", msg);
-        return (StatusCode::INTERNAL_SERVER_ERROR, msg.to_string());
-    }
+    let Json(mut config) = match config {
+        Ok(config) => config,
+        Err(error) => return json_error(error.status(), format!("Invalid config JSON: {error}")),
+    };
 
     if config.v4dhcp {
         // clear out these if we are using DHCP
@@ -213,7 +320,7 @@ pub async fn post_config(
     Box::pin(save_conf(state, config)).await
 }
 
-pub async fn reset_config(State(state): State<Arc<Pin<Box<MyState>>>>) -> (StatusCode, String) {
+pub async fn reset_config(State(state): State<Arc<Pin<Box<MyState>>>>) -> Response<Body> {
     let cnt = state.api_cnt.fetch_add(1, Ordering::Relaxed);
     info!("#{cnt} reset_conf()");
 
@@ -221,53 +328,129 @@ pub async fn reset_config(State(state): State<Arc<Pin<Box<MyState>>>>) -> (Statu
     Box::pin(save_conf(state, MyConfig::default())).await
 }
 
-async fn save_conf(state: Arc<Pin<Box<MyState>>>, config: MyConfig) -> (StatusCode, String) {
-    let mut nvs = state.nvs.write().await;
-    match config.to_nvs(&mut nvs) {
-        Ok(_) => {
-            info!("Config saved to nvs. Resetting soon...");
-            *state.reset.write().await = true;
-            (StatusCode::OK, "OK".to_string())
+async fn save_conf(state: Arc<Pin<Box<MyState>>>, config: MyConfig) -> Response<Body> {
+    if let Err(error) = config.validate() {
+        return ApiError::BadRequest(error.to_string()).into_response();
+    }
+    let operation = match MaintenanceGuard::acquire(state.clone()) {
+        Ok(operation) => operation,
+        Err(error) => return error.into_response(),
+    };
+    let result = config.to_nvs(&mut *state.nvs.write().await);
+    match result {
+        Ok(()) => {
+            info!("Configuration saved; restarting soon");
+            operation.reboot();
+            json_ok("Configuration saved, restarting")
         }
-        Err(e) => {
-            let msg = format!("Nvs write error: {e:?}");
-            error!("{}", msg);
-            (StatusCode::INTERNAL_SERVER_ERROR, msg)
-        }
+        Err(error) => ApiError::Internal(error).into_response(),
     }
 }
 
 async fn update_fw(
     State(state): State<Arc<Pin<Box<MyState>>>>,
-    Form(fw_update): Form<UpdateFirmware>,
-) -> Response<Body> {
+    request: Result<Form<UpdateFirmware>, FormRejection>,
+) -> Result<Response<Body>, ApiError> {
     let cnt = state.api_cnt.fetch_add(1, Ordering::Relaxed);
     info!("#{cnt} update_fw()");
-
-    info!("Firmware update: \n{fw_update:#?}");
-    if !fw_update.url.starts_with("http://") {
-        return StatusCode::BAD_REQUEST.into_response();
+    let Form(request) = match request {
+        Ok(request) => request,
+        Err(error) => {
+            return Ok(json_error(
+                error.status(),
+                format!("Invalid firmware request: {error}"),
+            ));
+        }
+    };
+    let url = request.url.trim().to_owned();
+    let uri = url
+        .parse::<axum::http::Uri>()
+        .map_err(|_| ApiError::BadRequest("Invalid firmware URL".into()))?;
+    if uri.scheme_str() != Some("http") || uri.authority().is_none() {
+        return Err(ApiError::BadRequest(
+            "Firmware URL must start with http:// and include a host".into(),
+        ));
     }
+    let operation = MaintenanceGuard::acquire(state)?;
+    tokio::task::spawn_blocking(move || {
+        // Completion and reboot scheduling continue even if the request is cancelled.
+        download_firmware(&url)?;
+        operation.reboot();
+        Ok::<_, ApiError>(())
+    })
+    .await
+    .context("Firmware download worker failed")??;
+    Ok(json_ok("Firmware updated, restarting"))
+}
 
-    let client_config = HttpConfiguration::default();
-
-    let mut ota = EspOta::new().unwrap();
-    let mut client = HttpClient::wrap(EspHttpConnection::new(&client_config).unwrap());
-    let req = client.get(fw_update.url.as_str()).unwrap();
-    let resp = req.submit().unwrap();
-    if resp.status() != StatusCode::OK {
-        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+fn download_firmware(url: &str) -> Result<(), ApiError> {
+    let mut ota = EspOta::new().context("Could not acquire OTA service")?;
+    // SAFETY: IDF returns an immutable partition descriptor, or NULL if unavailable.
+    let partition =
+        unsafe { esp_idf_sys::esp_ota_get_next_update_partition(std::ptr::null()).as_ref() }
+            .context("No OTA update partition available")?;
+    let capacity = partition.size as usize;
+    let config = HttpConfiguration {
+        timeout: Some(Duration::from_secs(30)),
+        ..Default::default()
+    };
+    let connection =
+        EspHttpConnection::new(&config).context("Could not initialize firmware HTTP client")?;
+    let mut client = HttpClient::wrap(connection);
+    let request = client
+        .get(url)
+        .map_err(|error| ApiError::BadRequest(format!("Invalid firmware URL: {error}")))?;
+    let mut response = request
+        .submit()
+        .map_err(|error| ApiError::BadGateway(format!("Firmware download failed: {error}")))?;
+    if response.status() != 200 {
+        return Err(ApiError::BadGateway(format!(
+            "Firmware download failed: HTTP {}",
+            response.status()
+        )));
     }
-
-    let mut update = ota.initiate_update().unwrap();
-    let mut buffer = [0_u8; 8192];
-    io::utils::copy(resp, &mut update, &mut buffer).unwrap();
-    info!("Update done. Restarting...");
-    update.complete().unwrap();
-    esp_idf_svc::hal::reset::restart();
-
-    // not reached
-    // StatusCode::OK.into_response()
+    let expected_size = response
+        .header("Content-Length")
+        .map(|value| value.parse::<usize>())
+        .transpose()
+        .map_err(|_| ApiError::BadGateway("Invalid firmware Content-Length".into()))?;
+    if expected_size.is_some_and(|size| size == 0 || size > capacity) {
+        return Err(ApiError::BadGateway(format!(
+            "Firmware must fit the {capacity}-byte OTA slot"
+        )));
+    }
+    let mut buffer = Vec::new();
+    buffer
+        .try_reserve_exact(8192)
+        .context("Could not allocate OTA transfer buffer")?;
+    buffer.resize(8192, 0);
+    let mut update = ota
+        .initiate_update()
+        .context("Could not begin OTA update")?;
+    let size = copy_firmware(
+        &mut response,
+        &mut update,
+        &mut buffer,
+        capacity,
+        expected_size,
+        std::time::Instant::now() + OTA_TRANSFER_TIMEOUT,
+    )
+    .map_err(|error| match error {
+        TransferError::Read(_) | TransferError::Invalid(_) => {
+            ApiError::BadGateway(error.to_string())
+        }
+        TransferError::Write(_) => ApiError::Internal(error.into()),
+    })?;
+    // Validate the complete image before changing the boot partition.
+    update
+        .finish()
+        .map_err(|error| {
+            ApiError::BadGateway(format!("Firmware image validation failed: {error}"))
+        })?
+        .activate()
+        .context("Could not activate firmware image")?;
+    info!("Firmware updated ({size} bytes); restarting soon");
+    Ok(())
 }
 
 // EOF

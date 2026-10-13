@@ -1,0 +1,3 @@
+# Used only by make_ota_probe_image in an isolated target directory.
+# This enables the application's OTA state handling; OTA does not install its bootloader.
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y

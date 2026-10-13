@@ -34,6 +34,17 @@ pub use config::*;
 mod state;
 pub use state::*;
 
+mod ota_details;
+pub use ota_details::*;
+
+#[cfg(feature = "ota-rollback-probe")]
+pub mod ota_probe;
+
+#[cfg(not(feature = "ota-rollback-probe"))]
+pub const FW_VERSION: &str = env!("CARGO_PKG_VERSION");
+#[cfg(feature = "ota-rollback-probe")]
+pub const FW_VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "-ota-probe");
+
 mod measure;
 pub use measure::*;
 
@@ -46,13 +57,16 @@ pub use mqtt::*;
 mod apiserver;
 pub use apiserver::*;
 
+mod ota_transfer;
+
 mod esphome_api;
 pub use esphome_api::*;
+
+mod esphome_frame;
 
 mod wifi;
 pub use wifi::*;
 
-pub const FW_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const AP_MODE_SSID: &str = "esp32temp";
 pub const AP_MODE_IP_ADDR: net::Ipv4Addr = net::Ipv4Addr::new(10, 42, 42, 1);
 pub const AP_MODE_IP_MASK: u8 = 24;

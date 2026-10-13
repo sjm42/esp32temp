@@ -15,10 +15,11 @@ unsafe impl Sync for MyOnewire {}
 pub struct MyState {
     pub ap_mode: bool,
     pub config: MyConfig,
-    pub ota_slot: String,
+    pub ota_details: OtaDetails,
 
     pub api_cnt: AtomicU32,
     pub wifi_up: RwLock<bool>,
+    pub wifi_generation: AtomicU32,
     pub ntp_ok: RwLock<bool>,
     pub if_index: RwLock<u32>,
     pub ip_addr: RwLock<net::Ipv4Addr>,
@@ -26,11 +27,13 @@ pub struct MyState {
     pub myid: RwLock<String>,
     pub my_mac_s: RwLock<String>,
     pub sensors: RwLock<Vec<MyOnewire>>,
+    pub sensor_inventory: Vec<Sensor>,
     pub data: RwLock<TempValues>,
     pub fresh_data: RwLock<bool>,
     pub nvs: RwLock<nvs::EspNvs<nvs::NvsDefault>>,
     pub led: RwLock<PinDriver<'static, Output>>,
     pub reset: RwLock<bool>,
+    pub maintenance_pending: std::sync::atomic::AtomicBool,
 }
 
 impl MyState {
@@ -38,7 +41,7 @@ impl MyState {
         ap_mode: bool,
         config: MyConfig,
         nvs: nvs::EspNvs<nvs::NvsDefault>,
-        ota_slot: String,
+        ota_details: OtaDetails,
         onewire_pins: Vec<MyOnewire>,
         temp_data: TempValues,
         led: PinDriver<'static, Output>,
@@ -46,21 +49,32 @@ impl MyState {
         MyState {
             ap_mode,
             config,
-            ota_slot,
+            ota_details,
             api_cnt: 0.into(),
             wifi_up: RwLock::new(false),
+            wifi_generation: AtomicU32::new(0),
             ntp_ok: RwLock::new(false),
             if_index: RwLock::new(0),
             ip_addr: RwLock::new(net::Ipv4Addr::new(0, 0, 0, 0)),
             ping_ip: RwLock::new(None),
             myid: RwLock::new("esp32temp".into()),
             my_mac_s: RwLock::new("00:00:00:00:00:00".into()),
+            sensor_inventory: onewire_pins
+                .iter()
+                .flat_map(|onewire| {
+                    onewire.ids.iter().map(|device| Sensor {
+                        iopin: onewire.name.clone(),
+                        sensor: format_device_id(device),
+                    })
+                })
+                .collect(),
             sensors: RwLock::new(onewire_pins),
             data: RwLock::new(temp_data),
             fresh_data: RwLock::new(false),
             nvs: RwLock::new(nvs),
             led: RwLock::new(led),
             reset: RwLock::new(false),
+            maintenance_pending: std::sync::atomic::AtomicBool::new(false),
         }
     }
 

@@ -1,0 +1,15 @@
+[package]
+name = "esp32temp-host-tests"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+embedded-svc = "0.29"
+thiserror = "2.0"
+tokio = { version = "1.53", features = ["io-util", "rt", "macros", "time", "test-util"] }

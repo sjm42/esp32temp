@@ -1,0 +1,35 @@
+#!/bin/sh
+# Build an application-only diagnostic image without changing normal build defaults.
+set -eu
+cd "$(dirname "$0")"
+probe_root=$(pwd)
+probe_board=${1:-c3}
+probe_action=${2:-build}
+case "$probe_board" in
+    c3) probe_mcu=esp32c3; probe_target=riscv32imc-esp-espidf; probe_feature=esp32-c3 ;;
+    wroom32) probe_mcu=esp32; probe_target=xtensa-esp32-espidf; probe_feature=esp-wroom-32 ;;
+    *) printf '%s\n' 'Usage: ./make_ota_probe_image {c3|wroom32} [build|check|clippy]' >&2; exit 2 ;;
+esac
+case "$probe_action" in
+    build|check|clippy) ;;
+    *) printf '%s\n' 'Expected build, check or clippy' >&2; exit 2 ;;
+esac
+probe_dir="$probe_root/target/ota-probe-$probe_board"
+mkdir -p "$probe_dir/tmp"
+export TMPDIR="$probe_dir/tmp"
+export MCU="$probe_mcu" CARGO_TARGET_DIR="$probe_dir" CARGO_WORKSPACE_DIR="$probe_root"
+export ESP_IDF_SDKCONFIG_DEFAULTS='sdkconfig.defaults;sdkconfig.ota-probe.defaults'
+# Ignore any local normal-firmware sdkconfig override.
+export ESP_IDF_SDKCONFIG="$probe_dir/probe-sdkconfig"
+export ESP_IDF_TOOLS_INSTALL_DIR="custom:$probe_root/.embuild/espressif"
+set -- "$probe_action" --locked --target "$probe_target" --no-default-features --features "$probe_feature,ota-rollback-probe"
+if [ "$probe_action" = build ]; then set -- "$@" --release; fi
+if [ "$probe_action" = clippy ]; then set -- "$@" --all-targets -- -D warnings; fi
+if [ "$probe_board" = wroom32 ]; then cargo +esp "$@"; else cargo "$@"; fi
+if [ "$probe_action" = build ]; then
+    probe_image="firmware-$probe_board-ota-probe.bin"
+    espflash save-image --skip-update-check --chip "$probe_mcu" --partition-table ./partitions.csv \
+        "$probe_dir/$probe_target/release/esp32temp" "$probe_image"
+    python3 ./check_ota_size.py "$probe_image" ./partitions.csv
+    printf 'OTA-only probe: %s\n' "$probe_image"
+fi

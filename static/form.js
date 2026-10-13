@@ -3,6 +3,7 @@
 document.addEventListener("DOMContentLoaded", function () {
     bindForm("esp32cfg", handleCfgSubmit);
     bindForm("esp32fw", handleFwSubmit);
+    bindForm("otaProbe", handleProbeSubmit);
     initUptime();
     initDetectedSensors();
     initTemperatures();
@@ -184,6 +185,7 @@ const handleFwSubmit = async (event) => {
     setFormStatus(form, "busy", "Downloading and flashing firmware...");
     try {
         const formData = new FormData(form);
+        formData.set("url", firmwareUrl);
         const responseData = await postFwForm({url, formData});
         setFormStatus(form, "ok", responseData.message || "Firmware update started");
     } catch (error) {
@@ -211,6 +213,21 @@ const postCfgDataAsJson = async ({url, formData}) => {
         headers: {"Accept": "application/json", "Content-Type": "application/json"},
         body: JSON.stringify(formObj)
     });
+};
+
+const handleProbeSubmit = async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    if (!window.confirm("Test automatic rollback now? The device will restart twice and should return to the previous firmware.")) return;
+    setFormBusy(form, true, "Testing...");
+    setFormStatus(form, "busy", "Arming fallback test...");
+    try {
+        const payload = await fetchPayloadOrError(form.action, {method: "POST"});
+        setFormStatus(form, "ok", payload.message);
+    } catch (error) {
+        setFormStatus(form, "error", error.message || "Fallback test failed");
+        setFormBusy(form, false);
+    }
 };
 
 const postFwForm = async ({url, formData}) => {

@@ -53,34 +53,34 @@ pub async fn measure_temperatures(
 
     for device in devices.iter() {
         let device_id = format_device_id(device);
-        set_resolution(one_wire_bus, device, MeasureResolution::TC)?;
+        let result = Box::pin(async {
+            set_resolution(one_wire_bus, device, MeasureResolution::TC)?;
+            sleep(Duration::from_millis(50)).await;
+            let wait_ms =
+                start_temperature_measurement(one_wire_bus, device, MeasureResolution::TC)?;
+            sleep(Duration::from_millis(u64::from(wait_ms) + 10)).await;
 
-        sleep(Duration::from_millis(50)).await;
-        let wait_ms = start_temperature_measurement(one_wire_bus, device, MeasureResolution::TC)?;
-        sleep(Duration::from_millis(u64::from(wait_ms))).await;
-        sleep(Duration::from_millis(10)).await;
-
-        let mut retries = 0;
-        loop {
-            match read_temperature(one_wire_bus, device) {
-                Ok(temperature) => {
-                    let m = Measurement {
-                        device_id: device_id.clone(),
-                        temperature,
-                    };
-                    info!("Got meas, retry#{retries}: {m:?}");
-                    meas.push(m);
-                    break;
+            for retry in 0..=max_retry {
+                match read_temperature(one_wire_bus, device) {
+                    Ok(temperature) => return Ok(temperature),
+                    Err(error) if retry == max_retry => return Err(error),
+                    Err(error) => warn!("Sensor {device_id} read error, retry {retry}: {error:#}"),
                 }
-                Err(e) => {
-                    retries += 1;
-                    error!("Sensor {device_id} read error: {e:#}");
-                    if retries > max_retry {
-                        break;
-                    }
-                }
+                sleep(Duration::from_millis(100)).await;
             }
-            sleep(Duration::from_millis(100)).await;
+            bail!("Sensor read attempts exhausted")
+        })
+        .await;
+        match result {
+            Ok(temperature) => {
+                let measurement = Measurement {
+                    device_id,
+                    temperature,
+                };
+                info!("Got measurement: {measurement:?}");
+                meas.push(measurement);
+            }
+            Err(error) => warn!("Sensor {device_id} measurement failed: {error:#}"),
         }
 
         sleep(Duration::from_millis(100)).await;
@@ -99,6 +99,9 @@ pub fn scan_1wire(one_wire_bus: &mut OWDriver<'_>) -> anyhow::Result<ScanResult>
 
     for device in one_wire_bus.search()? {
         let device = device?;
+        if all_devices.contains(&device) {
+            continue;
+        }
         if device.family_code() == DS18B20_FAMILY_CODE {
             ds18b20_devices.push(device);
         }
@@ -119,37 +122,13 @@ pub async fn poll_sensors(state: Arc<Pin<Box<MyState>>>) -> anyhow::Result<()> {
         }
     }
 
-    let mut cnt = 0;
     let ntp = sntp::EspSntp::new_default()?;
-    sleep(Duration::from_secs(10)).await;
-
-    loop {
-        if *state.wifi_up.read().await {
-            break;
-        }
-
-        if cnt > 300 {
-            esp_idf_hal::reset::restart();
-        }
-        cnt += 1;
-        sleep(Duration::from_millis(200)).await;
-    }
-    info!("WiFi connected.");
-
-    cnt = 0;
-    loop {
-        if Utc::now().year() > 2020 && ntp.get_sync_status() == sntp::SyncStatus::Completed {
-            break;
-        }
-
-        if cnt > 300 {
-            esp_idf_hal::reset::restart();
-        }
-        cnt += 1;
-        sleep(Duration::from_millis(200)).await;
+    info!("Waiting for NTP before polling sensors");
+    while Utc::now().year() <= 2020 || ntp.get_sync_status() != sntp::SyncStatus::Completed {
+        sleep(Duration::from_secs(1)).await;
     }
     *state.ntp_ok.write().await = true;
-    info!("NTP ok.");
+    info!("NTP synchronized; starting sensor polling");
 
     let poll_delay = state.config.delay;
     let max_retry = state.config.retries;
@@ -157,39 +136,56 @@ pub async fn poll_sensors(state: Arc<Pin<Box<MyState>>>) -> anyhow::Result<()> {
         info!("Polling 1-wire sensors");
         state.led_on().await?;
 
+        let mut temperatures = state
+            .sensor_inventory
+            .iter()
+            .map(|sensor| TempData {
+                iopin: sensor.iopin.clone(),
+                sensor: sensor.sensor.clone(),
+                value: NO_TEMP,
+            })
+            .collect::<Vec<_>>();
         {
             let mut onewires = state.sensors.write().await;
-            let mut i = 0;
             for onew in onewires.iter_mut() {
-                let w = OWDriver::new(unsafe { onew.pin.reborrow() })?;
-                match Box::pin(measure_temperatures(&w, &onew.ids, max_retry)).await {
-                    Ok(meas) => {
-                        info!("Onewire response {name}:\n{meas:#?}", name = onew.name);
-                        let mut data = state.data.write().await;
-                        for m in meas.into_iter() {
-                            data.temperatures[i] = TempData {
-                                iopin: onew.name.clone(),
-                                sensor: m.device_id,
-                                value: m.temperature,
-                            };
-                            i += 1;
+                let result = match OWDriver::new(unsafe { onew.pin.reborrow() }) {
+                    Ok(driver) => {
+                        Box::pin(measure_temperatures(&driver, &onew.ids, max_retry)).await
+                    }
+                    Err(error) => Err(error.into()),
+                };
+                match result {
+                    Ok(measurements) => {
+                        for measurement in measurements {
+                            if let Some(entry) = temperatures.iter_mut().find(|entry| {
+                                entry.iopin == onew.name && entry.sensor == measurement.device_id
+                            }) {
+                                entry.value = measurement.temperature;
+                            }
                         }
                     }
-                    Err(e) => {
-                        error!("Temp read error: {e:#}");
-                        break;
-                    }
+                    Err(error) => warn!("Temperature read failed on {}: {error:#}", onew.name),
                 }
-                drop(w);
                 sleep(Duration::from_millis(100)).await;
             }
-            let mut data = state.data.write().await;
-            let now = Utc::now();
-            data.timestamp = now.timestamp();
-            data.last_update = now.to_rfc2822().to_string();
-            let mut fresh_data = state.fresh_data.write().await;
-            *fresh_data = true;
         }
+        let now = Utc::now();
+        let synchronized = now.year() > 2020;
+        if synchronized && !*state.ntp_ok.read().await {
+            info!("NTP time available");
+            *state.ntp_ok.write().await = true;
+        }
+        {
+            let mut data = state.data.write().await;
+            data.temperatures = temperatures;
+            data.timestamp = if synchronized { now.timestamp() } else { 0 };
+            data.last_update = if synchronized {
+                now.to_rfc2822()
+            } else {
+                "-".into()
+            };
+        }
+        *state.fresh_data.write().await = true;
         state.led_off().await?;
 
         sleep(Duration::from_secs(poll_delay)).await;
@@ -209,7 +205,12 @@ fn start_temperature_measurement(
 fn read_temperature(one_wire_bus: &OWDriver<'_>, device: &OWAddress) -> anyhow::Result<f32> {
     let scratchpad = read_scratchpad(one_wire_bus, device)?;
     let raw = i16::from_le_bytes([scratchpad[0], scratchpad[1]]);
-    Ok(f32::from(raw) / 16.0)
+    let temperature = f32::from(raw) / 16.0;
+    anyhow::ensure!(
+        (-55.0..=125.0).contains(&temperature),
+        "DS18B20 temperature out of range: {temperature}"
+    );
+    Ok(temperature)
 }
 
 fn set_resolution(
@@ -261,6 +262,10 @@ fn send_bytes(one_wire_bus: &OWDriver<'_>, device: &OWAddress, bytes: &[u8]) -> 
     let mut buf = [0u8; 16];
     let addr = device.address().to_le_bytes();
 
+    anyhow::ensure!(
+        bytes.len() <= buf.len() - 9,
+        "1-Wire command payload too large"
+    );
     buf[0] = OWCommand::MatchRom as u8;
     buf[1..9].copy_from_slice(&addr);
     buf[9..9 + bytes.len()].copy_from_slice(bytes);

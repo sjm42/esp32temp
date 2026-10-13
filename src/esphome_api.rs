@@ -3,11 +3,16 @@
 use std::collections::BTreeMap;
 
 use tokio::{
-    io::{self, AsyncReadExt, AsyncWriteExt},
+    io::{self, AsyncWriteExt},
     net::{TcpListener, TcpStream},
 };
 
+use crate::esphome_frame::{FrameReader, read_varuint_from_slice};
 use crate::*;
+
+const MAX_CLIENTS: usize = 4;
+const CLIENT_IDLE_TIMEOUT: Duration = Duration::from_secs(90);
+const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 
 const ESPHOME_API_PORT: u16 = 6053;
 const API_VERSION_MAJOR: u32 = 1;
@@ -137,11 +142,17 @@ pub async fn run_esphome_api(state: Arc<Pin<Box<MyState>>>) -> anyhow::Result<()
     let listener = TcpListener::bind(addr).await?;
     info!("ESPHome API listening on {listen}");
 
+    let clients = Arc::new(tokio::sync::Semaphore::new(MAX_CLIENTS));
     loop {
         let (stream, peer) = listener.accept().await?;
+        let Ok(permit) = clients.clone().try_acquire_owned() else {
+            warn!("ESPHome API client limit reached; rejecting {peer}");
+            continue;
+        };
         info!("ESPHome API client connected: {peer}");
         let state2 = state.clone();
         tokio::spawn(async move {
+            let _permit = permit;
             if let Err(e) = Box::pin(handle_client(state2, stream)).await {
                 warn!("ESPHome API client error: {e}");
             }
@@ -154,69 +165,79 @@ async fn handle_client(state: Arc<Pin<Box<MyState>>>, mut stream: TcpStream) -> 
     let mut state_subscribed = false;
     let mut entities = build_entity_defs(&state).await;
     let mut last_sent = BTreeMap::<u32, EntityStateValue>::new();
+    let mut reader = FrameReader::default();
+    let mut last_frame = tokio::time::Instant::now();
 
     loop {
-        match Box::pin(timeout(Duration::from_secs(5), read_frame(&mut stream))).await {
-            Ok(Ok((msg_type_raw, payload))) => match ApiMessageType::try_from(msg_type_raw) {
-                Ok(ApiMessageType::HelloRequest) => {
-                    if let Some((client_info, major, minor)) = parse_hello_request(&payload) {
-                        info!(
-                            "ESPHome hello from '{client_info}' API {major}.{minor} (server {API_VERSION_MAJOR}.{API_VERSION_MINOR})"
-                        );
-                    } else {
-                        info!("ESPHome hello request received");
+        match Box::pin(timeout(
+            Duration::from_secs(5),
+            reader.read_frame(&mut stream),
+        ))
+        .await
+        {
+            Ok(Ok((msg_type_raw, payload))) => {
+                last_frame = tokio::time::Instant::now();
+                match ApiMessageType::try_from(msg_type_raw) {
+                    Ok(ApiMessageType::HelloRequest) => {
+                        if let Some((client_info, major, minor)) = parse_hello_request(&payload) {
+                            info!(
+                                "ESPHome hello from '{client_info}' API {major}.{minor} (server {API_VERSION_MAJOR}.{API_VERSION_MINOR})"
+                            );
+                        } else {
+                            info!("ESPHome hello request received");
+                        }
+                        send_hello_response(&state, &mut stream).await?;
                     }
-                    send_hello_response(&state, &mut stream).await?;
+                    Ok(ApiMessageType::AuthRequest) => {
+                        info!("ESPHome auth request ignored (password auth removed upstream)");
+                    }
+                    Ok(ApiMessageType::PingRequest) => {
+                        send_frame(&mut stream, ApiMessageType::PingResponse, &[]).await?;
+                    }
+                    Ok(ApiMessageType::DisconnectRequest) => {
+                        send_frame(&mut stream, ApiMessageType::DisconnectResponse, &[]).await?;
+                        return Ok(());
+                    }
+                    Ok(ApiMessageType::DeviceInfoRequest) => {
+                        send_device_info_response(&state, &mut stream).await?;
+                    }
+                    Ok(ApiMessageType::ListEntitiesRequest) => {
+                        entities = build_entity_defs(&state).await;
+                        send_list_entities_response(&mut stream, &entities).await?;
+                    }
+                    Ok(ApiMessageType::SubscribeStatesRequest) => {
+                        state_subscribed = true;
+                        Box::pin(send_state_updates(
+                            &state,
+                            &mut stream,
+                            &entities,
+                            &mut last_sent,
+                            true,
+                        ))
+                        .await?;
+                    }
+                    Ok(ApiMessageType::SubscribeHomeassistantServicesRequest)
+                    | Ok(ApiMessageType::SubscribeHomeassistantStatesRequest) => continue,
+                    Ok(ApiMessageType::NoiseEncryptionSetKeyRequest) => {
+                        let mut payload = Vec::new();
+                        pb_put_bool(1, false, &mut payload);
+                        send_frame(
+                            &mut stream,
+                            ApiMessageType::NoiseEncryptionSetKeyResponse,
+                            &payload,
+                        )
+                        .await?;
+                    }
+                    Ok(msg_type) => {
+                        debug!("ESPHome API: unhandled message type {msg_type:?}");
+                        continue;
+                    }
+                    Err(_) => {
+                        debug!("ESPHome API: unhandled message type {msg_type_raw}");
+                        continue;
+                    }
                 }
-                Ok(ApiMessageType::AuthRequest) => {
-                    info!("ESPHome auth request ignored (password auth removed upstream)");
-                }
-                Ok(ApiMessageType::PingRequest) => {
-                    send_frame(&mut stream, ApiMessageType::PingResponse, &[]).await?;
-                }
-                Ok(ApiMessageType::DisconnectRequest) => {
-                    send_frame(&mut stream, ApiMessageType::DisconnectResponse, &[]).await?;
-                    return Ok(());
-                }
-                Ok(ApiMessageType::DeviceInfoRequest) => {
-                    send_device_info_response(&state, &mut stream).await?;
-                }
-                Ok(ApiMessageType::ListEntitiesRequest) => {
-                    entities = build_entity_defs(&state).await;
-                    send_list_entities_response(&mut stream, &entities).await?;
-                }
-                Ok(ApiMessageType::SubscribeStatesRequest) => {
-                    state_subscribed = true;
-                    Box::pin(send_state_updates(
-                        &state,
-                        &mut stream,
-                        &entities,
-                        &mut last_sent,
-                        true,
-                    ))
-                    .await?;
-                }
-                Ok(ApiMessageType::SubscribeHomeassistantServicesRequest)
-                | Ok(ApiMessageType::SubscribeHomeassistantStatesRequest) => continue,
-                Ok(ApiMessageType::NoiseEncryptionSetKeyRequest) => {
-                    let mut payload = Vec::new();
-                    pb_put_bool(1, false, &mut payload);
-                    send_frame(
-                        &mut stream,
-                        ApiMessageType::NoiseEncryptionSetKeyResponse,
-                        &payload,
-                    )
-                    .await?;
-                }
-                Ok(msg_type) => {
-                    debug!("ESPHome API: unhandled message type {msg_type:?}");
-                    continue;
-                }
-                Err(_) => {
-                    debug!("ESPHome API: unhandled message type {msg_type_raw}");
-                    continue;
-                }
-            },
+            }
             Ok(Err(e)) => {
                 if is_closed_connection(&e) {
                     return Ok(());
@@ -224,7 +245,9 @@ async fn handle_client(state: Arc<Pin<Box<MyState>>>, mut stream: TcpStream) -> 
                 return Err(e.into());
             }
             Err(_) => {
-                debug!("ESPHome API poll tick");
+                if last_frame.elapsed() >= CLIENT_IDLE_TIMEOUT {
+                    return Ok(());
+                }
             }
         }
 
@@ -379,7 +402,7 @@ async fn send_state_updates(
 }
 
 async fn build_entity_defs(state: &Arc<Pin<Box<MyState>>>) -> Vec<EntityDef> {
-    let sensors = state.sensors.read().await;
+    let sensors = &state.sensor_inventory;
     let mut entities = Vec::new();
 
     entities.push(EntityDef {
@@ -405,27 +428,30 @@ async fn build_entity_defs(state: &Arc<Pin<Box<MyState>>>) -> Vec<EntityDef> {
         state_class: STATE_CLASS_NONE,
     });
 
-    for onewire in sensors.iter() {
-        for address in onewire.ids.iter() {
-            let address_hex = format!(
-                "{:016X}",
-                u64::from_be_bytes(address.address().to_le_bytes())
+    let mut addresses = std::collections::BTreeSet::new();
+    for sensor in sensors {
+        let address_hex = sensor.sensor.clone();
+        // A ROM is the existing Home Assistant entity identity; advertise it once.
+        if !addresses.insert(address_hex.clone()) {
+            warn!(
+                "Duplicate sensor ROM {address_hex} in inventory; advertising one ESPHome entity"
             );
-            let object_id = format!("temperature_{}", address_hex.to_ascii_lowercase());
-            entities.push(EntityDef {
-                source: EntitySource::Temperature {
-                    address_hex: address_hex.clone(),
-                },
-                key: stable_key(&object_id),
-                object_id,
-                name: format!("Temperature {} {}", onewire.name, address_hex),
-                kind: EntityKind::Sensor,
-                unit: Some("\u{00B0}C".into()),
-                accuracy: 2,
-                device_class: Some("temperature".into()),
-                state_class: STATE_CLASS_MEASUREMENT,
-            });
+            continue;
         }
+        let object_id = format!("temperature_{}", address_hex.to_ascii_lowercase());
+        entities.push(EntityDef {
+            source: EntitySource::Temperature {
+                address_hex: address_hex.clone(),
+            },
+            key: stable_key(&object_id),
+            object_id,
+            name: format!("Temperature {} {}", sensor.iopin, address_hex),
+            kind: EntityKind::Sensor,
+            unit: Some("\u{00B0}C".into()),
+            accuracy: 2,
+            device_class: Some("temperature".into()),
+            state_class: STATE_CLASS_MEASUREMENT,
+        });
     }
 
     entities
@@ -465,31 +491,6 @@ async fn build_entity_states(
     out
 }
 
-async fn read_frame(stream: &mut TcpStream) -> io::Result<(u32, Vec<u8>)> {
-    let preamble = stream.read_u8().await?;
-    if preamble != 0x00 {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("invalid preamble 0x{preamble:02X}"),
-        ));
-    }
-
-    let payload_len = read_varuint_async(stream).await? as usize;
-    let msg_type = read_varuint_async(stream).await? as u32;
-    if payload_len > 64 * 1024 {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("payload too large: {payload_len}"),
-        ));
-    }
-
-    let mut payload = vec![0_u8; payload_len];
-    if payload_len > 0 {
-        stream.read_exact(&mut payload).await?;
-    }
-    Ok((msg_type, payload))
-}
-
 async fn send_frame(
     stream: &mut TcpStream,
     msg_type: ApiMessageType,
@@ -500,24 +501,9 @@ async fn send_frame(
     put_varuint(payload.len() as u64, &mut frame);
     put_varuint(u64::from(msg_type.id()), &mut frame);
     frame.extend_from_slice(payload);
-    stream.write_all(&frame).await
-}
-
-async fn read_varuint_async(stream: &mut TcpStream) -> io::Result<u64> {
-    let mut result = 0_u64;
-    let mut shift = 0_u32;
-    for _ in 0..10 {
-        let byte = stream.read_u8().await?;
-        result |= (u64::from(byte & 0x7F)) << shift;
-        if (byte & 0x80) == 0 {
-            return Ok(result);
-        }
-        shift += 7;
-    }
-    Err(io::Error::new(
-        io::ErrorKind::InvalidData,
-        "varuint overflow",
-    ))
+    Box::pin(timeout(WRITE_TIMEOUT, stream.write_all(&frame)))
+        .await
+        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "ESPHome client stopped reading"))?
 }
 
 fn parse_hello_request(payload: &[u8]) -> Option<(String, u32, u32)> {
@@ -528,11 +514,15 @@ fn parse_hello_request(payload: &[u8]) -> Option<(String, u32, u32)> {
 
     while idx < payload.len() {
         let key = read_varuint_from_slice(payload, &mut idx)?;
-        let field_number = (key >> 3) as u32;
+        let key = u32::try_from(key).ok()?;
+        let field_number = key >> 3;
+        if field_number == 0 {
+            return None;
+        }
         let wire_type = (key & 0x07) as u8;
         match wire_type {
             0 => {
-                let value = read_varuint_from_slice(payload, &mut idx)? as u32;
+                let value = u32::try_from(read_varuint_from_slice(payload, &mut idx)?).ok()?;
                 match field_number {
                     2 => major = value,
                     3 => minor = value,
@@ -540,19 +530,18 @@ fn parse_hello_request(payload: &[u8]) -> Option<(String, u32, u32)> {
                 }
             }
             2 => {
-                let len = read_varuint_from_slice(payload, &mut idx)? as usize;
-                if idx + len > payload.len() {
+                let len = usize::try_from(read_varuint_from_slice(payload, &mut idx)?).ok()?;
+                let end = idx.checked_add(len)?;
+                if end > payload.len() {
                     return None;
                 }
                 if field_number == 1 {
-                    client_info = std::str::from_utf8(&payload[idx..idx + len])
-                        .ok()?
-                        .to_string();
+                    client_info = std::str::from_utf8(&payload[idx..end]).ok()?.to_string();
                 }
-                idx += len;
+                idx = end;
             }
-            1 => idx += 8,
-            5 => idx += 4,
+            1 => idx = idx.checked_add(8)?,
+            5 => idx = idx.checked_add(4)?,
             _ => return None,
         }
         if idx > payload.len() {
@@ -561,24 +550,6 @@ fn parse_hello_request(payload: &[u8]) -> Option<(String, u32, u32)> {
     }
 
     Some((client_info, major, minor))
-}
-
-fn read_varuint_from_slice(data: &[u8], idx: &mut usize) -> Option<u64> {
-    let mut out = 0_u64;
-    let mut shift = 0_u32;
-    for _ in 0..10 {
-        if *idx >= data.len() {
-            return None;
-        }
-        let b = data[*idx];
-        *idx += 1;
-        out |= (u64::from(b & 0x7F)) << shift;
-        if (b & 0x80) == 0 {
-            return Some(out);
-        }
-        shift += 7;
-    }
-    None
 }
 
 fn is_closed_connection(err: &io::Error) -> bool {

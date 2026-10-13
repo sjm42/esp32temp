@@ -8,6 +8,7 @@ use std::{
 use flate2::{Compression, write::GzEncoder};
 
 fn main() -> anyhow::Result<()> {
+    println!("cargo:rustc-check-cfg=cfg(esp_idf_bootloader_app_rollback_enable)");
     bd(build_data::set_GIT_BRANCH())?;
     bd(build_data::set_GIT_COMMIT())?;
     bd(build_data::set_SOURCE_TIMESTAMP())?;
